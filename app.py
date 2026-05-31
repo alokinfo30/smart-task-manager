@@ -39,7 +39,7 @@ def load_todo_df():
     # Ensure all required columns exist
     for col in ["Date", "Task", "Status", "Priority", "CompletedAt"]:
         if col not in df.columns:
-            df[col] = "Medium" if col == "Priority" else None
+            df[col] = "High" if col == "Priority" else None
 
     # --- Logic: Auto-delete "Done" tasks after 24 hours ---
     if not df.empty:
@@ -147,9 +147,9 @@ def main():
             # Create a new empty row with default values
             new_row = pd.DataFrame([{
                 "Date": datetime.now().date(),
-                "Task": "",
+                "Task": "test task",
                 "Status": "Pending",
-                "Priority": "Medium",
+                "Priority": "High",
                 "CompletedAt": None
             }])
             df = pd.concat([df, new_row], ignore_index=True)

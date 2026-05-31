@@ -54,7 +54,8 @@ def save_chat_state(agent_history, chat_display):
         "chat_display": chat_display
     }
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+        # Use default=str to safely handle bytes objects in multimodal parts (voice/files)
+        json.dump(state, f, ensure_ascii=False, indent=2, default=str)
 
 def load_chat_state():
     """Loads the chat state from the JSON file."""
@@ -106,13 +107,21 @@ def normalize_history(history):
     for item in history or []:
         if isinstance(item, dict):
             role = item.get("role")
-            text = item.get("content")
-            if text is None:
-                continue
             # Gemma models use 'model' instead of 'assistant'
             if role == "assistant":
                 role = "model"
-            normalized.append(genai.types.Content(
+
+            # Handle restored complex dictionaries (from model_dump/to_dict) or simple dicts
+            parts = item.get("parts")
+            if parts and isinstance(parts, list):
+                text_parts = [p.get("text") for p in parts if isinstance(p, dict) and p.get("text")]
+                if text_parts:
+                    normalized.append(genai.types.Content(
+                        parts=[genai.types.Part(text=t) for t in text_parts],
+                        role=role
+                    ))
+            elif "content" in item:
+                normalized.append(genai.types.Content(
                 parts=[genai.types.Part(text=text)],
                 role=role,
             ))

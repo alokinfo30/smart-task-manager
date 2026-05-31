@@ -23,7 +23,7 @@ def read_todo_list() -> str:
     except Exception as e:
         return f"Error reading tasks: {str(e)}"
 
-def add_task(task: str, priority: str = "Low", date: str = None) -> str:
+def add_task(task: str = "test task", priority: str = "High", date: str = None) -> str:
     """
     Appends a new task to the todo list.
     
