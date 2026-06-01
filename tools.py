@@ -7,6 +7,7 @@ import threading
 
 # Constants for file paths (could be moved to .env)
 TODO_FILE = os.getenv("TODO_FILE_PATH", "todo.txt")
+ARCHIVE_DIR = "archives"
 
 # Thread-local storage to keep track of the current user session for the agent
 context = threading.local()
@@ -14,6 +15,13 @@ context = threading.local()
 def get_current_user():
     """Helper to get the current authenticated user from thread context."""
     return getattr(context, 'user', 'guest')
+
+def get_archive_file_path(user_id: str):
+    """Determines the file path for a user's persistent task archive."""
+    if user_id == "guest":
+        return None # Guests don't have persistent archives
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    return os.path.join(ARCHIVE_DIR, f"daily_summary_{user_id}.txt")
 
 def read_todo_list() -> str:
     """
@@ -161,17 +169,21 @@ def update_task_status(task_identifier: str, new_status: str) -> str:
 
 def log_report(report_content: str) -> str:
     """
-    Saves the provided content (e.g., chat history, analysis, or report) to the 'daily_summary.txt' file for permanent storage.
+    Saves the provided content (e.g., chat history, analysis, or report) to a user-specific archive file for permanent storage.
     Use this to archive information that should persist even after the current chat session is cleared.
     Args:
         report_content: The string content (e.g., formatted chat history) to be saved.
     """
     try:
+        user = get_current_user()
+        archive_file = get_archive_file_path(user)
+        if not archive_file:
+            return "Error: Cannot archive in guest mode."
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open("daily_summary.txt", "a", encoding="utf-8") as f:
+        with open(archive_file, "a", encoding="utf-8") as f:
             f.write(f"\n\n# Persistent Archive: {timestamp}\n")
             f.write(report_content)
             f.write("\n" + "-"*40)
-        return "Success: Response has been archived in daily_summary.txt."
+        return f"Success: Response has been archived in the secure storage for user {user}."
     except Exception as e:
         return f"Error archiving response: {str(e)}"

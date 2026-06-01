@@ -8,7 +8,6 @@ import json
 
 load_dotenv()
 
-HISTORY_FILE = "chat_history.json"
 # Use Gemma 4 models for lifetime-free, unlimited conversation (no quota limits)
 MODEL_FALLBACKS = ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
 
@@ -16,6 +15,11 @@ MODEL_FALLBACKS = ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
 # Ensure GOOGLE_API_KEY is set in your environment variables
 api_key = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
+
+def get_history_file_path(user_id):
+    if user_id == "guest":
+        return None # Guests don't have persistent chat history
+    return f"chat_history_{user_id}.json"
 
 SYSTEM_INSTRUCTION = """
 You are a highly capable Personal Task Assistant. Your goal is to help the user manage their professional and personal life efficiently.
@@ -38,8 +42,12 @@ When asked to 'Analyze' or 'Report', read the list first, then provide a structu
 Today's Date: {today}
 """.format(today=datetime.now().strftime("%Y-%m-%d"))
 
-def save_chat_state(agent_history, chat_display):
+def save_chat_state(agent_history, chat_display, user_id):
     """Saves both the agent's internal history and the UI chat display to a JSON file."""
+    history_file = get_history_file_path(user_id)
+    if not history_file:
+        return # Do not save for guests
+
     serialized_history = []
     for c in agent_history:
         if hasattr(c, "model_dump"):
@@ -58,23 +66,28 @@ def save_chat_state(agent_history, chat_display):
         "agent_history": serialized_history,
         "chat_display": chat_display
     }
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+    with open(history_file, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2, default=str)
 
-def load_chat_state():
+def load_chat_state(user_id):
     """Loads the chat state from the JSON file."""
-    if os.path.exists(HISTORY_FILE):
+    history_file = get_history_file_path(user_id)
+    if not history_file or not os.path.exists(history_file):
+        return {"agent_history": [], "chat_display": []}
+
+    if os.path.exists(history_file):
         try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            with open(history_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception as e:
-            print(f"⚠️ Error loading history: {e}")
+        except Exception as e: # Catching all exceptions for robustness
+            print(f"⚠️ Error loading history for {user_id}: {e}")
     return {"agent_history": [], "chat_display": []}
 
-def clear_chat_state():
+def clear_chat_state(user_id):
     """Removes the history file from disk."""
-    if os.path.exists(HISTORY_FILE):
-        os.remove(HISTORY_FILE)
+    history_file = get_history_file_path(user_id)
+    if history_file and os.path.exists(history_file):
+        os.remove(history_file)
 
 def extract_response_text(response):
     """Extract the assistant text from a generative response."""

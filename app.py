@@ -20,7 +20,7 @@ import pandas as pd
 from io import StringIO
 from datetime import datetime, timedelta
 from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state
-from tools import TODO_FILE, log_report
+import tools # Import the whole module to access context
 from auth import (
     PasswordHandler,
     AuthenticationError,
@@ -49,11 +49,11 @@ def init_session_state():
 
 def load_todo_df(current_user):
     """Loads the todo list into a DataFrame, handles 24h deletion, and sorts."""
-    if not os.path.exists(TODO_FILE):
+    if not os.path.exists(tools.TODO_FILE):
         df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
     else:
         try:
-            df = pd.read_csv(TODO_FILE)
+            df = pd.read_csv(tools.TODO_FILE)
             # Remove 'Time' column if it exists in an old file
             if 'Time' in df.columns:
                 df = df.drop(columns=['Time'])
@@ -84,7 +84,7 @@ def load_todo_df(current_user):
         mask = (df['Status'] == 'Done') & (df['CompletedAt'].notna()) & (df['CompletedAt'] < cutoff)
         if mask.any():
             df = df[~mask]
-            df.to_csv(TODO_FILE, index=False)
+            df.to_csv(tools.TODO_FILE, index=False)
     
     # Privacy Filtering: owner OR explicitly shared. Guests only see their own tasks.
     def is_visible(row):
@@ -171,6 +171,9 @@ def main():
     if current_user is None:
         current_user = st.session_state.current_user
     
+    # CRITICAL: Set the user context for tool execution (like archiving)
+    tools.context.user = current_user
+
     # Custom CSS for status font colors
     st.markdown("""
         <style>
@@ -189,6 +192,8 @@ def main():
     # Guest Account Warning
     if current_user == "guest":
         st.warning("⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.")
+        st.info("As a guest, you cannot use the AI assistant, save tasks, or view archives.")
+
 
     def style_status(row):
         color = ''
@@ -197,7 +202,13 @@ def main():
         elif row['Status'] == 'Done': color = 'color: #008000; font-weight: bold;'
         return [color if i == 'Status' else '' for i in row.index]
 
-    df = load_todo_df(current_user)
+    df = pd.DataFrame() # Initialize empty df for guest mode
+    # Initialize df with all required columns, even if empty, to prevent KeyError
+    required_cols_for_metrics = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
+    df = pd.DataFrame(columns=required_cols_for_metrics)
+    if current_user != "guest":
+        df = load_todo_df(current_user)
+
     
     # 1. Dashboard Metrics
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -279,31 +290,35 @@ def main():
         
         # Add a button to explicitly add a new task
         if st.button("➕ Add New Task", width='stretch'):
-            # Create a new empty row with default values
-            new_row = pd.DataFrame([{
-                "Date": datetime.now().date(),
-                "Task": "New task...",
-                "Status": "Pending",
-                "Priority": "High",
-                "CompletedAt": None,
-                "Owner": current_user,
-                "SharedWith": "" # Default to not shared with anyone
-            }])
-            
-            # Persist to file immediately so it appears after rerun
-            if os.path.exists(TODO_FILE):
-                full_df = pd.read_csv(TODO_FILE)
+            if current_user == "guest":
+                st.error("Please log in to add tasks.")
             else:
-                full_df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
-            
-            # Ensure required columns exist before concat, including the new 'SharedWith'
-            for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
-                if col not in full_df.columns:
-                    full_df[col] = "High" if col == "Priority" else ("guest" if col == "Owner" else (False if col == "Shared" else None))
-            
-            final_df = pd.concat([full_df, new_row], ignore_index=True)
-            final_df.to_csv(TODO_FILE, index=False)
-            st.rerun() # Rerun to show the new row in the editor
+                # Create a new empty row with default values
+                new_row = pd.DataFrame([{
+                    "Date": datetime.now().date(),
+                    "Task": "New task...",
+                    "Status": "Pending",
+                    "Priority": "High",
+                    "CompletedAt": None,
+                    "Owner": current_user,
+                    "SharedWith": "" # Default to not shared with anyone
+                }])
+                
+                # Persist to file immediately so it appears after rerun
+                if os.path.exists(tools.TODO_FILE):
+                    full_df = pd.read_csv(tools.TODO_FILE)
+                else:
+                    full_df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
+                
+                # Ensure required columns exist before concat
+                required_cols = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
+                for col in required_cols:
+                    if col not in full_df.columns:
+                        full_df[col] = "High" if col == "Priority" else (current_user if col == "Owner" else ("" if col == "SharedWith" else None))
+                
+                final_df = pd.concat([full_df, new_row], ignore_index=True)
+                final_df.to_csv(tools.TODO_FILE, index=False)
+                st.rerun() # Rerun to show the new row in the editor
 
         # Add a temporary 'Delete' column for the editor
         df_editor = df.copy()
@@ -344,177 +359,208 @@ def main():
 
         btn_col1, btn_col2 = st.columns(2)
         if btn_col1.button("💾 Save Changes", use_container_width=True):
-            # 1. Filter out rows marked for deletion
-            save_df = edited_df[edited_df["🗑️"] == False].drop(columns=["🗑️"])
-            
-            # 2. Restore real Mobile Numbers from masked versions before saving
-            for idx, row in save_df.iterrows():
-                if idx in original_metadata:
-                    # Restore Owner (Disabled field, so always restore original)
-                    save_df.at[idx, 'Owner'] = original_metadata[idx]['Owner']
-                    
-                    # Restore SharedWith (Check if user entered new numbers or kept the masked ones)
-                    current_val = str(row['SharedWith'])
-                    if "*" in current_val:
-                        # User didn't overwrite with new numbers, restore original list
-                        save_df.at[idx, 'SharedWith'] = original_metadata[idx]['SharedWith']
-                    # else: user typed new numbers, keep as is
-                else:
-                    # New task row (appended via button)
-                    save_df.at[idx, 'Owner'] = current_user
-
-            # Logic: If status changed to 'Done', record timestamp
-            for idx, row in save_df.iterrows():
-                # Determine if this was a new row or if the index exists in the original df
-                original_status = None
-                if idx in df.index:
-                    original_status = df.loc[idx, 'Status']
-                
-                if row['Status'] == 'Done' and original_status != 'Done':
-                    # Use Pandas Timestamp and floor to seconds to match inferred column dtype
-                    save_df.at[idx, 'CompletedAt'] = pd.Timestamp.now().floor('s')
-                # Reset timestamp if status is reverted from Done
-                elif row['Status'] != 'Done':
-                    save_df.at[idx, 'CompletedAt'] = None
-            
-            # Reload full file to ensure we don't overwrite other users' data
-            if os.path.exists(TODO_FILE):
-                full_df = pd.read_csv(TODO_FILE)
-                # Ensure required columns exist to avoid KeyError during filtering or processing
-                for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
-                    if col not in full_df.columns:
-                        if col == "Priority": full_df[col] = "High"
-                        elif col == "Owner": full_df[col] = "guest"
-                        elif col == "SharedWith": full_df[col] = ""
-                        else: full_df[col] = None
-                # Cast to string to prevent type mismatch during concat or editing
-                full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).replace('nan', '')
+            if current_user == "guest":
+                st.error("Please log in to save changes.")
             else:
-                full_df = pd.DataFrame(columns=save_df.columns)
-            
-            # Logic: Identify rows that belong to the user's view (owned or shared)
-            def check_persistence(row):
-                if row['Owner'] == current_user: return True
-                shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
-                return current_user in shared_list and current_user != 'guest'
+                # 1. Filter out rows marked for deletion
+                save_df = edited_df[edited_df["🗑️"] == False].drop(columns=["🗑️"])
+                
+                # 2. Restore real Mobile Numbers from masked versions before saving
+                for idx, row in save_df.iterrows():
+                    if idx in original_metadata:
+                        # Restore Owner (Disabled field, so always restore original)
+                        save_df.at[idx, 'Owner'] = original_metadata[idx]['Owner']
+                        
+                        # Restore SharedWith (Check if user entered new numbers or kept the masked ones)
+                        current_val = str(row['SharedWith'])
+                        if "*" in current_val:
+                            # User didn't overwrite with new numbers, restore original list
+                            save_df.at[idx, 'SharedWith'] = original_metadata[idx]['SharedWith']
+                        # else: user typed new numbers, keep as is
+                    else:
+                        # New task row (appended via button)
+                        save_df.at[idx, 'Owner'] = current_user
 
-            visible_mask = full_df.apply(check_persistence, axis=1)
-            others_tasks = full_df[~visible_mask]
-            
-            final_df = pd.concat([others_tasks, save_df], ignore_index=True)
-            final_df.to_csv(TODO_FILE, index=False)
-            st.success("Tasks saved and automatically sorted!")
-            st.rerun() # Rerun to reflect changes in the UI and metrics
+                # Logic: If status changed to 'Done', record timestamp
+                for idx, row in save_df.iterrows():
+                    # Determine if this was a new row or if the index exists in the original df
+                    original_status = None
+                    if idx in df.index:
+                        original_status = df.loc[idx, 'Status']
+                    
+                    if row['Status'] == 'Done' and original_status != 'Done':
+                        # Use Pandas Timestamp and floor to seconds to match inferred column dtype
+                        save_df.at[idx, 'CompletedAt'] = pd.Timestamp.now().floor('s')
+                    # Reset timestamp if status is reverted from Done
+                    elif row['Status'] != 'Done':
+                        save_df.at[idx, 'CompletedAt'] = None
+                
+                # Reload full file to ensure we don't overwrite other users' data
+                if os.path.exists(tools.TODO_FILE):
+                    full_df = pd.read_csv(tools.TODO_FILE)
+                    # Ensure required columns exist to avoid KeyError during filtering or processing
+                    for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
+                        if col not in full_df.columns:
+                            if col == "Priority": full_df[col] = "High"
+                            elif col == "Owner": full_df[col] = "guest"
+                            elif col == "SharedWith": full_df[col] = ""
+                            else: full_df[col] = None
+                    # Cast to string to prevent type mismatch during concat or editing
+                    full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).replace('nan', '')
+                else:
+                    full_df = pd.DataFrame(columns=save_df.columns)
+                
+                # Logic: Identify rows that belong to the user's view (owned or shared)
+                def check_persistence(row):
+                    if row['Owner'] == current_user: return True
+                    shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
+                    return current_user in shared_list and current_user != 'guest'
+
+                visible_mask = full_df.apply(check_persistence, axis=1)
+                others_tasks = full_df[~visible_mask]
+                
+                final_df = pd.concat([others_tasks, save_df], ignore_index=True)
+                final_df.to_csv(tools.TODO_FILE, index=False)
+                st.success("Tasks saved and automatically sorted!")
+                st.rerun() # Rerun to reflect changes in the UI and metrics
             
         if btn_col2.button("🗑️ Clear Done", use_container_width=True):
-            if os.path.exists(TODO_FILE):
-                full_df = pd.read_csv(TODO_FILE)
-                # Ensure required columns exist to avoid KeyError: 'Owner'
-                for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
-                    if col not in full_df.columns:
-                        if col == "Priority": full_df[col] = "High"
-                        elif col == "Owner": full_df[col] = "guest"
-                        elif col == "SharedWith": full_df[col] = ""
-                        else: full_df[col] = None
+            if current_user == "guest":
+                st.error("Please log in to clear done tasks.")
+            else:
+                if os.path.exists(tools.TODO_FILE):
+                    full_df = pd.read_csv(tools.TODO_FILE)
+                    # Ensure required columns exist to avoid KeyError: 'Owner'
+                    for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
+                        if col not in full_df.columns:
+                            if col == "Priority": full_df[col] = "High"
+                            elif col == "Owner": full_df[col] = "guest"
+                            elif col == "SharedWith": full_df[col] = ""
+                            else: full_df[col] = None
 
-                # Keep tasks not owned by user OR tasks owned by user that are NOT Done
-                mask = (full_df['Owner'] != current_user) | (full_df['Status'] != 'Done')
-                final_df = full_df[mask]
-                final_df.to_csv(TODO_FILE, index=False)
+                    # Keep tasks not owned by user OR tasks owned by user that are NOT Done
+                    mask = (full_df['Owner'] != current_user) | (full_df['Status'] != 'Done')
+                    final_df = full_df[mask]
+                    final_df.to_csv(tools.TODO_FILE, index=False)
                 
-            st.toast("Completed tasks archived.")
-            st.rerun()
+                st.toast("Completed tasks archived.")
+                st.rerun()
 
     with col2:
         st.subheader("📊 Agent Execution")
         
         # Initialize or load chat history from disk
-        if "agent_history" not in st.session_state:
-            state = load_chat_state()
+        if "agent_history" not in st.session_state or st.session_state.current_user != st.session_state.get("last_loaded_user", None):
+            state = load_chat_state(current_user)
             st.session_state.agent_history = state.get("agent_history", [])
             st.session_state.chat_display = state.get("chat_display", [])
+            st.session_state.last_loaded_user = current_user
 
+        if current_user == "guest":
+            st.info("Please log in to use the AI assistant.")
+            
         # Display previous conversation
         chat_container = st.container(height=300, border=True)
-        for msg in st.session_state.chat_display:
+        for i, msg in enumerate(st.session_state.chat_display):
             with chat_container.chat_message(msg["role"]):
-                st.write(msg["content"])
+                col_text, col_sel = st.columns([0.9, 0.1])
+                col_text.write(msg["content"])
+                col_sel.checkbox("💾", key=f"sel_{i}", value=True, help="Select for archival", label_visibility="collapsed")
 
         user_command = st.chat_input("Ask your assistant...")
         
         if user_command:
-            final_prompt = user_command
-            
-            # Update UI display
-            st.session_state.chat_display.append({"role": "user", "content": final_prompt})
-            with chat_container.chat_message("user"):
-                st.write(final_prompt)
+            if current_user == "guest":
+                st.error("Please log in to use the AI assistant.")
+            else:
+                final_prompt = user_command
+                
+                # Update UI display
+                st.session_state.chat_display.append({"role": "user", "content": final_prompt})
+                with chat_container.chat_message("user"):
+                    st.write(final_prompt)
 
-            # Capture stdout logs to display the agent's logic in the UI
-            log_stream = StringIO()
-            old_stdout = sys.stdout
-            sys.stdout = log_stream
-            
-            try:
-                with st.spinner("Assistant is thinking..."):
-                    report_content, updated_history = run_autonomous_agent(
-                        final_prompt, st.session_state.agent_history, user_id=current_user
-                    )
-                    st.session_state.agent_history = updated_history
-                    st.session_state.chat_display.append({"role": "assistant", "content": report_content})
-                    # Persist state after successful agent execution
-                    save_chat_state(st.session_state.agent_history, st.session_state.chat_display)
-            finally:
-                sys.stdout = old_stdout
-            
-            if report_content:
-                with chat_container.chat_message("assistant"):
-                    st.write(report_content)
-                st.rerun() # Refresh to update the task table and metrics
+                # Capture stdout logs to display the agent's logic in the UI
+                log_stream = StringIO()
+                old_stdout = sys.stdout
+                sys.stdout = log_stream
+                
+                try:
+                    with st.spinner("Assistant is thinking..."):
+                        report_content, updated_history = run_autonomous_agent(
+                            final_prompt, st.session_state.agent_history, user_id=current_user
+                        )
+                        st.session_state.agent_history = updated_history
+                        st.session_state.chat_display.append({"role": "assistant", "content": report_content})
+                        # Persist state after successful agent execution
+                        save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
+                finally:
+                    sys.stdout = old_stdout
+                
+                if report_content:
+                    with chat_container.chat_message("assistant"):
+                        st.write(report_content)
+                    st.rerun() # Refresh to update the task table and metrics
 
         if st.session_state.chat_display:
-            # Allow users to manually save the last assistant response for future reference
-            # Changed to archive the entire current chat history
-            if st.button("💾 Archive Current Chat", use_container_width=True):
-                # Format the entire chat display for archiving
-                archive_content = "\n".join([
-                    f"{msg['role'].upper()}: {msg['content']}" 
-                    for msg in st.session_state.chat_display
-                ])
-                status_msg = log_report(archive_content)
-                st.success(status_msg)
-                st.rerun()
+            if current_user == "guest":
+                st.info("Please log in to archive or clear chat history.")
+            else:
+                # Allow users to selectively save messages for future reference
+                if st.button("💾 Archive Selected Messages", use_container_width=True):
+                    # Filter messages based on selection checkboxes
+                    selected_msgs = [
+                        f"{msg['role'].upper()}: {msg['content']}" 
+                        for i, msg in enumerate(st.session_state.chat_display)
+                        if st.session_state.get(f"sel_{i}", False)
+                    ]
+                    
+                    if selected_msgs:
+                        archive_content = "\n".join(selected_msgs)
+                        status_msg = tools.log_report(archive_content)
+                        if "Success" in status_msg:
+                            st.toast(status_msg, icon="✅")
+                            time.sleep(1) # Allow user to see the confirmation
+                            st.rerun()
+                        else:
+                            st.error(status_msg)
+                    else:
+                        st.warning("No messages selected to archive.")
 
-            if st.button("🗑️ Clear Chat History", use_container_width=True):
-                st.session_state.agent_history = []
-                st.session_state.chat_display = []
-                clear_chat_state()
-                st.rerun()
+                if st.button("🗑️ Clear Chat History", use_container_width=True):
+                    st.session_state.agent_history = []
+                    st.session_state.chat_display = []
+                    clear_chat_state(current_user)
+                    st.rerun()
 
         # Persistent Log Viewer
         st.divider()
         with st.expander("📖 View Persistent Archives", expanded=False):
-            if os.path.exists("daily_summary.txt"):
-                with open("daily_summary.txt", "r", encoding="utf-8") as f:
-                    archive_content = f.read()
-                
-                # Capture user edits from the text area
-                updated_archive = st.text_area(
-                    "Archived Reports (Edit directly and save)", 
-                    archive_content, 
-                    height=400,
-                    key="archive_content_editor"
-                )
-                
-                # If changes are detected, show a Save button
-                if updated_archive != archive_content:
-                    if st.button("💾 Save Archive Changes", use_container_width=True):
-                        with open("daily_summary.txt", "w", encoding="utf-8") as f:
-                            f.write(updated_archive)
-                        st.success("Archive updated successfully!")
-                        st.rerun()
+            if current_user == "guest":
+                st.info("Please log in to view your archives.")
             else:
-                st.info("No persistent archives found yet.")
+                archive_file_path = tools.get_archive_file_path(current_user)
+                if archive_file_path and os.path.exists(archive_file_path):
+                    with open(archive_file_path, "r", encoding="utf-8") as f:
+                        archive_content = f.read()
+                    
+                    # Capture user edits from the text area
+                    updated_archive = st.text_area(
+                        "Archived Reports (Edit directly and save)", 
+                        archive_content, 
+                        height=400,
+                        key="archive_content_editor"
+                    )
+                    
+                    # If changes are detected, show a Save button
+                    if updated_archive != archive_content:
+                        if st.button("💾 Save Archive Changes", use_container_width=True):
+                            with open(archive_file_path, "w", encoding="utf-8") as f:
+                                f.write(updated_archive)
+                            st.success("Archive updated successfully!")
+                            st.rerun()
+                else:
+                    st.info("No persistent archives found yet.")
 
         # Display the agent's internal logs/thinking from the LAST run if available
         if 'log_stream' in locals() and log_stream.getvalue():
