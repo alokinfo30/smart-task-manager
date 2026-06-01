@@ -124,12 +124,8 @@ def load_todo_df(current_user):
         cutoff = datetime.now() - timedelta(hours=24)
         mask = (df['Status'] == 'Done') & (df['CompletedAt'].notna()) & (df['CompletedAt'] < cutoff)
         if mask.any():
+            # Filter in memory only to prevent Rerun Loop on production
             df = df[~mask]
-            with tools.file_lock: # Use thread lock from tools.py
-                try:
-                    df.to_csv(tools.TODO_FILE, index=False)
-                except Exception:
-                    pass
 
     # Privacy Filtering: owner OR explicitly shared. Guests only see their own tasks.
     def is_visible(row):

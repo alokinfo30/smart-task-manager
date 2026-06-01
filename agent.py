@@ -104,10 +104,8 @@ def load_chat_state(user_id):
             
             if deleted_any:
                 data["chat_display"] = new_display
-                # Reset agent history to maintain context integrity with the UI
+                # Reset agent history in the returned state to maintain context integrity
                 data["agent_history"] = []
-                with open(history_file, "w", encoding="utf-8") as f_out:
-                    json.dump(data, f_out, ensure_ascii=False, indent=2, default=str)
             
             return data
         except (json.JSONDecodeError, Exception) as e:
