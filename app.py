@@ -14,6 +14,7 @@ if sys.platform == 'win32':
 
 import streamlit as st
 import os
+import re
 from dotenv import load_dotenv
 import time
 import pandas as pd
@@ -24,6 +25,35 @@ import tools # Import the whole module to access context
 import auth
 
 load_dotenv()
+
+def parse_task_name_from_prompt(prompt: str) -> str | None:
+    """Extract a direct task name from an explicit add-task request."""
+    if not prompt or not isinstance(prompt, str):
+        return None
+
+    prompt_clean = prompt.strip()
+    # Look for clear add task instructions like "add task demo", "create task demo", "add task called demo"
+    match = re.search(r"\b(?:add|create)(?:\s+a|\s+an)?\s+task(?:\s+(?:called|named|as))?\s+[\"']?(?P<task>[^\"'\n]+?)(?:[\"']|\s+with\b|\s+for\b|\s+today\b|\s+now\b|\s+to\s+my\s+tasks\b|\s+to\s+todo\b|\s+to\s+my\s+list\b|\s+to\s+my\s+task\s+list\b|$)", prompt_clean, flags=re.IGNORECASE)
+    if match:
+        task = match.group('task').strip()
+        if task:
+            return task
+
+    # Fallback for prompts like "add demo to my tasks" or "please create task demo to my list"
+    normalized = prompt_clean
+    for suffix in [" to my tasks", " to todo", " to my list", " as a task", " to my task list"]:
+        if normalized.lower().endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+            break
+
+    match = re.search(r"\b(?:add|create)(?:\s+a|\s+an)?\s+task(?:\s+(?:called|named|as))?\s+(?P<task>.+)", normalized, flags=re.IGNORECASE)
+    if match:
+        task = match.group('task').strip(" '")
+        if task and len(task.split()) <= 10:
+            return task
+
+    return None
+
 
 def mask_mobile(mobile):
     """Helper to mask mobile numbers for privacy."""
@@ -551,8 +581,6 @@ def render_dashboard(current_user):
                 st.error("Please log in to use the AI assistant.")
             else:
                 final_prompt = user_command
-                
-                # Update UI display
                 st.session_state.chat_display.append({
                     "role": "user", 
                     "content": final_prompt,
@@ -562,32 +590,48 @@ def render_dashboard(current_user):
                 with chat_container.chat_message("user"):
                     st.write(final_prompt)
 
-                # Capture stdout logs to display the agent's logic in the UI
-                log_stream = StringIO()
-                old_stdout = sys.stdout
-                sys.stdout = log_stream
-                
-                try:
-                    with st.spinner("Assistant is thinking..."):
-                        report_content, updated_history = run_autonomous_agent(
-                            final_prompt, st.session_state.agent_history, user_id=current_user
-                        )
-                        st.session_state.agent_history = updated_history
-                        st.session_state.chat_display.append({
-                            "role": "assistant", 
-                            "content": report_content,
-                            "timestamp": datetime.now().isoformat(),
-                            "archived": False
-                        })
-                        # Persist state after successful agent execution
-                        save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
-                finally:
-                    sys.stdout = old_stdout
-                
-                if report_content:
+                # Detect explicit task-creation commands and persist directly.
+                task_name = parse_task_name_from_prompt(final_prompt)
+                if task_name:
+                    tools.add_task(task=task_name, priority="High", owner=current_user)
+                    assistant_text = f"✅ Added task '{task_name}' with High priority for today."
+                    st.session_state.chat_display.append({
+                        "role": "assistant",
+                        "content": assistant_text,
+                        "timestamp": datetime.now().isoformat(),
+                        "archived": False
+                    })
+                    save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
                     with chat_container.chat_message("assistant"):
-                        st.write(report_content)
-                    st.rerun() # Refresh to update the task table and metrics
+                        st.write(assistant_text)
+                    st.rerun()
+
+                # Continue through normal AI agent flow when the prompt is not a direct add-task command.
+                else:
+                    # Capture stdout logs to display the agent's logic in the UI
+                    log_stream = StringIO()
+                    old_stdout = sys.stdout
+                    sys.stdout = log_stream
+                    try:
+                        with st.spinner("Assistant is thinking..."):
+                            report_content, updated_history = run_autonomous_agent(
+                                final_prompt, st.session_state.agent_history, user_id=current_user
+                            )
+                            st.session_state.agent_history = updated_history
+                            st.session_state.chat_display.append({
+                                "role": "assistant", 
+                                "content": report_content,
+                                "timestamp": datetime.now().isoformat(),
+                                "archived": False
+                            })
+                            # Persist state after successful agent execution
+                            save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
+                    finally:
+                        sys.stdout = old_stdout
+                    if report_content:
+                        with chat_container.chat_message("assistant"):
+                            st.write(report_content)
+                        st.rerun()
 
         if st.session_state.chat_display:
             if current_user == "guest":
