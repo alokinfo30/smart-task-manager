@@ -332,6 +332,19 @@ def main():
             lambda x: ", ".join([mask_mobile(s.strip()) for s in str(x).split(",") if s.strip()]) if x else ""
         )
 
+        # Normalize column dtypes to satisfy Streamlit's data_editor type checks
+        df_editor["🗑️"] = df_editor["🗑️"].astype(bool)
+        df_editor["Status"] = df_editor["Status"].fillna("Pending").astype(str)
+        df_editor["Priority"] = df_editor["Priority"].fillna("High").astype(str)
+        if "Date" in df_editor.columns:
+            # Ensure Date column is date objects (not strings) for DateColumn
+            df_editor["Date"] = pd.to_datetime(df_editor["Date"], errors='coerce').dt.date
+        df_editor["Task"] = df_editor["Task"].fillna("").astype(str)
+        # CompletedAt should be a datetime (or NaT) for DatetimeColumn
+        df_editor["CompletedAt"] = pd.to_datetime(df_editor["CompletedAt"], errors='coerce')
+        df_editor["Owner"] = df_editor["Owner"].fillna("").astype(str)
+        df_editor["SharedWith"] = df_editor["SharedWith"].fillna("").astype(str)
+
         edited_df = st.data_editor(
             df_editor,
             column_config={
