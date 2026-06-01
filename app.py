@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state
 import tools # Import the whole module to access context
 from auth import (
+    SECURITY_QUESTIONS,
     PasswordHandler,
     AuthenticationError,
 )
@@ -157,11 +158,20 @@ def render_auth_ui():
 
         with col_reg:
             if st.button("📝 Register", use_container_width=True):
-                try:
-                    if PasswordHandler.register(mobile_input, pin_input):
-                        st.sidebar.success("Account created! You can now login.")
-                except AuthenticationError as e:
-                    st.sidebar.error(str(e))
+                st.session_state.show_reg_form = True
+
+        if st.session_state.get("show_reg_form", False):
+            with st.sidebar.expander("Complete Registration", expanded=True):
+                q = st.selectbox("Security Question", SECURITY_QUESTIONS)
+                a = st.text_input("Answer", placeholder="Your secret answer")
+                if st.button("Confirm Registration", use_container_width=True):
+                    try:
+                        if PasswordHandler.register(mobile_input, pin_input, q, a):
+                            st.success("Account created!")
+                            st.session_state.show_reg_form = False
+                            st.rerun()
+                    except AuthenticationError as e:
+                        st.error(str(e))
 
         with col_log:
             if st.button("🔐 Login", use_container_width=True):
@@ -176,6 +186,26 @@ def render_auth_ui():
                 except AuthenticationError as e:
                     st.sidebar.error(str(e))
         
+        if st.sidebar.button("❓ Forgot PIN?", use_container_width=True):
+            st.session_state.forgot_pin_flow = True
+
+        if st.session_state.get("forgot_pin_flow", False):
+            with st.sidebar.expander("Recover PIN", expanded=True):
+                try:
+                    question = PasswordHandler.get_user_security_question(mobile_input)
+                    st.write(f"**Question**: {question}")
+                    ans = st.text_input("Security Answer", type="password")
+                    if st.button("Verify & Show New PIN"):
+                        new_p = PasswordHandler.verify_answer_and_reset_pin(mobile_input, ans)
+                        st.success(f"Recovery Successful!")
+                        st.code(f"Your NEW PIN is: {new_p}")
+                        st.warning("⚠️ Write this down! This message will disappear on refresh.")
+                except AuthenticationError as e:
+                    st.error(str(e))
+                if st.button("Cancel"):
+                    st.session_state.forgot_pin_flow = False
+                    st.rerun()
+
         st.sidebar.divider()
         return None
         
@@ -226,12 +256,19 @@ def main():
         st.info("As a guest, you cannot use the AI assistant, save tasks, or view archives.")
 
 
-    def style_status(row):
-        color = ''
-        if row['Status'] == 'Pending': color = 'color: #FF4B4B; font-weight: bold;'
-        elif row['Status'] == 'Working': color = 'color: #FFD700; font-weight: bold;'
-        elif row['Status'] == 'Done': color = 'color: #008000; font-weight: bold;'
-        return [color if i == 'Status' else '' for i in row.index]
+    render_dashboard(current_user)
+
+def style_status(row):
+    color = ''
+    if row['Status'] == 'Pending': color = 'color: #FF4B4B; font-weight: bold;'
+    elif row['Status'] == 'Working': color = 'color: #FFD700; font-weight: bold;'
+    elif row['Status'] == 'Done': color = 'color: #008000; font-weight: bold;'
+    return [color if i == 'Status' else '' for i in row.index]
+
+def render_dashboard(current_user):
+    """Renders the main dashboard, including metrics, table, and editor."""
+    import tools # Ensure access inside function
+    import pandas as pd
 
     df = pd.DataFrame() # Initialize empty df for guest mode
     # Initialize df with all required columns, even if empty, to prevent KeyError

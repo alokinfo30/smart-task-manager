@@ -130,23 +130,18 @@ def extract_response_text(response):
     if not content:
         return ""
 
+    parts = []
     if isinstance(content, list):
-        texts = []
-        for item in content:
-            if getattr(item, "text", None):
-                texts.append(item.text)
-            for part in getattr(item, "parts", []) or []:
-                if getattr(part, "text", None):
-                    texts.append(part.text)
-        return "".join(texts).strip()
+        parts = content
+    elif hasattr(content, "parts"):
+        parts = content.parts
 
-    if getattr(content, "text", None):
-        return content.text.strip()
-
-    return "".join(
-        part.text or "" for part in getattr(content, "parts", []) or []
-        if getattr(part, "text", None)
-    ).strip()
+    texts = []
+    for part in parts:
+        if hasattr(part, "text") and part.text:
+            texts.append(part.text)
+    
+    return "".join(texts).strip()
 
 
 def normalize_history(history):

@@ -18,6 +18,13 @@ PASSWORD_DB = "passwords.json"
 HASH_ALGORITHM = "sha256"
 ITERATIONS = 100000
 
+SECURITY_QUESTIONS = [
+    "What was the name of your first pet?",
+    "In what city were you born?",
+    "What is your mother's maiden name?",
+    "What was the name of your first school?",
+]
+
 class AuthenticationError(Exception):
     """Raised when authentication fails."""
     pass
@@ -78,7 +85,7 @@ class PasswordHandler:
         # In a real app, this would integrate with a free SMTP or SMS API.
 
     @staticmethod
-    def register(mobile: str, pin: str):
+    def register(mobile: str, pin: str, security_question: str, security_answer: str):
         if not pin.isdigit() or len(pin) != 6:
             raise AuthenticationError("PIN must be exactly 6 digits.")
         
@@ -90,14 +97,28 @@ class PasswordHandler:
             raise AuthenticationError("User already exists.")
             
         pwd_hash, salt = PasswordHandler.hash_password(pin)
+        ans_hash, ans_salt = PasswordHandler.hash_password(security_answer.strip().lower())
+        
         db[mobile] = {
             "hash": pwd_hash,
             "salt": salt,
             "attempts": 0,
-            "registered_at": datetime.now().isoformat()
+            "registered_at": datetime.now().isoformat(),
+            "security_question": security_question,
+            "security_answer_hash": ans_hash,
+            "security_answer_salt": ans_salt
         }
         PasswordDB.save(db)
         return True
+
+    @staticmethod
+    def get_user_security_question(mobile: str) -> str:
+        """Retrieves the security question for a given mobile number."""
+        db = PasswordDB.load()
+        user_data = db.get(mobile)
+        if not user_data:
+            raise AuthenticationError("User not found.")
+        return user_data.get("security_question", "No security question set.")
 
     @staticmethod
     def login(mobile: str, pin: str):
@@ -135,3 +156,27 @@ class PasswordHandler:
             
             remaining = 3 - user_data["attempts"]
             raise AuthenticationError(f"Invalid PIN. {remaining} attempts remaining before reset.")
+
+    @staticmethod
+    def verify_answer_and_reset_pin(mobile: str, provided_answer: str) -> str:
+        """Verifies security answer and returns a new 6-digit PIN."""
+        db = PasswordDB.load()
+        user_data = db.get(mobile)
+        
+        if not user_data:
+            raise AuthenticationError("User not found.")
+            
+        stored_hash = user_data.get("security_answer_hash")
+        stored_salt = user_data.get("security_answer_salt")
+        
+        if not stored_hash or not PasswordHandler.verify_password(stored_hash, stored_salt, provided_answer.strip().lower()):
+            raise AuthenticationError("Incorrect security answer.")
+            
+        # Generate and save new PIN
+        new_pin = "".join([str(secrets.randbelow(10)) for _ in range(6)])
+        pwd_hash, salt = PasswordHandler.hash_password(new_pin)
+        user_data["hash"] = pwd_hash
+        user_data["salt"] = salt
+        user_data["attempts"] = 0
+        PasswordDB.save(db)
+        return new_pin

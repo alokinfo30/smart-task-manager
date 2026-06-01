@@ -11,6 +11,7 @@ ARCHIVE_DIR = "archives"
 
 # Thread-local storage to keep track of the current user session for the agent
 context = threading.local()
+file_lock = threading.Lock()
 
 def get_current_user():
     """Helper to get the current authenticated user from thread context."""
@@ -73,19 +74,20 @@ def add_task(task: str = "test task", priority: str = "High", date: str = None, 
         file_exists = os.path.exists(TODO_FILE)
         is_empty = not file_exists or os.path.getsize(TODO_FILE) == 0
         
-        with open(TODO_FILE, "a", encoding="utf-8", newline="") as file:
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            if is_empty:
-                writer.writeheader()
-            writer.writerow({
-                "Date": date,
-                "Task": task,
-                "Status": "Pending",
-                "Priority": priority,
-                "CompletedAt": "",
-                "Owner": owner if owner else get_current_user(),
-                "SharedWith": shared_with_mobiles
-            })
+        with file_lock:
+            with open(TODO_FILE, "a", encoding="utf-8", newline="") as file:
+                writer = csv.DictWriter(file, fieldnames=fieldnames)
+                if is_empty:
+                    writer.writeheader()
+                writer.writerow({
+                    "Date": date,
+                    "Task": task,
+                    "Status": "Pending",
+                    "Priority": priority,
+                    "CompletedAt": "",
+                    "Owner": owner if owner else get_current_user(),
+                    "SharedWith": shared_with_mobiles
+                })
         return f"Success: Task '{task}' added successfully."
     except Exception as e:
         return f"Error adding task: {str(e)}"
@@ -118,7 +120,8 @@ def delete_task(task_identifier: str, owner: str = None) -> str:
         deleted_tasks_df = df[mask]
         remaining_df = df[~mask]
         
-        remaining_df.to_csv(TODO_FILE, index=False)
+        with file_lock:
+            remaining_df.to_csv(TODO_FILE, index=False)
         
         deleted_count = len(deleted_tasks_df)
         deleted_summaries = "\n".join([f"- {row['Task']}" for index, row in deleted_tasks_df.iterrows()])
@@ -162,7 +165,8 @@ def update_task_status(task_identifier: str, new_status: str, owner: str = None)
         else:
             df.loc[mask, 'CompletedAt'] = None
             
-        df.to_csv(TODO_FILE, index=False)
+        with file_lock:
+            df.to_csv(TODO_FILE, index=False)
         return f"Success: Updated status to '{new_status}' for tasks matching '{task_identifier}'."
     except Exception as e:
         return f"Error updating task: {str(e)}"
