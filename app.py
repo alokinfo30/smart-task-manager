@@ -49,30 +49,24 @@ def init_session_state():
 
 def load_todo_df(current_user):
     """Loads the todo list into a DataFrame, handles 24h deletion, and sorts."""
-    if not os.path.exists(tools.TODO_FILE):
-        df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
-    else:
-        try:
+    required_cols = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
+    
+    try:
+        if os.path.exists(tools.TODO_FILE):
             df = pd.read_csv(tools.TODO_FILE)
-            # Remove 'Time' column if it exists in an old file
-            if 'Time' in df.columns:
-                df = df.drop(columns=['Time'])
-        except Exception:
-            df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
+        else:
+            df = pd.DataFrame(columns=required_cols)
+    except Exception:
+        df = pd.DataFrame(columns=required_cols)
 
     # Ensure all required columns exist
-    required_cols = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
     for col in required_cols:
         if col not in df.columns:
-            if col == "Priority":
-                df[col] = "High"
-            elif col == "Owner":
-                df[col] = "guest"
-            elif col == "SharedWith":
-                df[col] = ""
-            else:
-                df[col] = None
+            df[col] = "High" if col == "Priority" else (current_user if col == "Owner" else ("" if col == "SharedWith" else None))
     
+    if 'Time' in df.columns:
+        df = df.drop(columns=['Time'])
+
     # Ensure SharedWith is string type to prevent Streamlit editor errors (e.g. inferred as FLOAT)
     df['SharedWith'] = df['SharedWith'].fillna('').astype(str).replace('nan', '')
 
@@ -86,6 +80,11 @@ def load_todo_df(current_user):
             df = df[~mask]
             df.to_csv(tools.TODO_FILE, index=False)
     
+    # Final check to ensure columns exist before filtering
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = None
+
     # Privacy Filtering: owner OR explicitly shared. Guests only see their own tasks.
     def is_visible(row):
         if row['Owner'] == current_user: return True
@@ -93,11 +92,13 @@ def load_todo_df(current_user):
         shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
         return current_user in shared_list
 
-    user_mask = df.apply(is_visible, axis=1)
-    df = df[user_mask].copy()
+    if not df.empty:
+        user_mask = df.apply(is_visible, axis=1)
+        df = df[user_mask].copy()
 
     # Always convert Date to ensure st.data_editor compatibility
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
+    if not df.empty and 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
     
     # Automatic sorting by Date
     if not df.empty:

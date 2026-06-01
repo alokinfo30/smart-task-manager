@@ -8,8 +8,8 @@ import json
 
 load_dotenv()
 
-# Use Gemini 1.5 models as they support the required Tool Use/Function Calling features.
-MODEL_FALLBACKS = ["gemini-1.5-flash", "gemini-1.5-pro"]
+# Use Gemma 4 models for lifetime-free conversation (available on this API)
+MODEL_FALLBACKS = ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
 
 # Configure Gemini AI client
 # Ensure GOOGLE_API_KEY is set in your environment variables
