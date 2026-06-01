@@ -11,7 +11,7 @@ load_dotenv()
 # Use Gemma 4 models for lifetime-free conversation (available on this API)
 MODEL_FALLBACKS = ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
 
-# Configure Gemini AI client
+# Configure AI client (uses Gemma models)
 # Ensure GOOGLE_API_KEY is set in your environment variables
 api_key = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
