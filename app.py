@@ -33,7 +33,7 @@ def parse_task_name_from_prompt(prompt: str) -> str | None:
 
     prompt_clean = prompt.strip()
     # Look for clear add task instructions like "add task demo", "create task demo", "add task called demo"
-    match = re.search(r"\b(?:add|create)(?:\s+a|\s+an)?\s+task(?:\s+(?:called|named|as))?\s+[\"']?(?P<task>[^\"'\n]+?)(?:[\"']|\s+with\b|\s+for\b|\s+today\b|\s+now\b|\s+to\s+my\s+tasks\b|\s+to\s+todo\b|\s+to\s+my\s+list\b|\s+to\s+my\s+task\s+list\b|$)", prompt_clean, flags=re.IGNORECASE)
+    match = re.search(r"\b(?:add|create)(?:\s+(?:a|an|new|a new|an new))?\s+(?:task\s+)?[\"']?(?P<task>[^\"'\n]+?)(?:[\"']|\s+with\b|\s+for\b|\s+today\b|\s+now\b|\s+to\s+my\s+tasks\b|\s+to\s+todo\b|\s+to\s+my\s+list\b|\s+to\s+my\s+task\s+list\b|$)", prompt_clean, flags=re.IGNORECASE)
     if match:
         task = match.group('task').strip()
         if task:
@@ -46,7 +46,7 @@ def parse_task_name_from_prompt(prompt: str) -> str | None:
             normalized = normalized[: -len(suffix)]
             break
 
-    match = re.search(r"\b(?:add|create)(?:\s+a|\s+an)?\s+task(?:\s+(?:called|named|as))?\s+(?P<task>.+)", normalized, flags=re.IGNORECASE)
+    match = re.search(r"\b(?:add|create)(?:\s+(?:a|an|new|a new|an new))?\s+(?:task\s+)?(?P<task>.+)", normalized, flags=re.IGNORECASE)
     if match:
         task = match.group('task').strip(" '")
         if task and len(task.split()) <= 10:
@@ -69,7 +69,10 @@ def init_session_state():
     if "current_user" not in st.session_state:
         # Check for persistent session in query parameters to handle page refreshes
         if "u" in st.query_params:
-            st.session_state.current_user = st.query_params["u"]
+            user_param = st.query_params.get("u")
+            st.session_state.current_user = (
+                user_param[0] if isinstance(user_param, list) and user_param else user_param
+            )
             st.session_state.auth_method = "PIN"
         else:
             st.session_state.current_user = "guest"
@@ -206,7 +209,7 @@ def render_auth_ui():
                         st.session_state.current_user = mobile_input
                         # Persist user ID in query params to survive page refresh if requested
                         if remember_me:
-                            st.query_params["u"] = mobile_input
+                            st.experimental_set_query_params(u=mobile_input)
                         st.session_state.auth_method = "PIN"
                         st.rerun()
                 except auth.AuthenticationError as e:
@@ -244,7 +247,7 @@ def render_auth_ui():
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             st.session_state.current_user = "guest"
             st.session_state.auth_method = None
-            st.query_params.clear()
+            st.experimental_set_query_params()
             st.rerun()
         
         return st.session_state.current_user
@@ -383,7 +386,7 @@ def render_dashboard(current_user):
         st.subheader("📝 Task Editor")
         
         # Add a button to explicitly add a new task
-        if st.button("➕ Add New Task", width='stretch'):
+        if st.button("➕ Add New Task", use_container_width=True):
             if current_user == "guest":
                 st.error("Please log in to add tasks.")
             else:

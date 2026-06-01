@@ -221,6 +221,11 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
             update_task_status_owner,
             log_report_owner,
         ],
+        tool_config=genai.types.ToolConfig(
+            function_calling_config=genai.types.FunctionCallingConfig(
+                mode=genai.types.FunctionCallingConfigMode.AUTO
+            )
+        ),
         automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(),
         temperature=0.25,
     )
