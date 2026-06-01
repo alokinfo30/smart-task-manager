@@ -21,11 +21,7 @@ from io import StringIO
 from datetime import datetime, timedelta
 from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state
 import tools # Import the whole module to access context
-from auth import (
-    SECURITY_QUESTIONS,
-    PasswordHandler,
-    AuthenticationError,
-)
+import auth
 
 load_dotenv()
 
@@ -162,28 +158,28 @@ def render_auth_ui():
 
         if st.session_state.get("show_reg_form", False):
             with st.sidebar.expander("Complete Registration", expanded=True):
-                q = st.selectbox("Security Question", SECURITY_QUESTIONS)
+                q = st.selectbox("Security Question", auth.SECURITY_QUESTIONS)
                 a = st.text_input("Answer", placeholder="Your secret answer")
                 if st.button("Confirm Registration", use_container_width=True):
                     try:
-                        if PasswordHandler.register(mobile_input, pin_input, q, a):
+                        if auth.PasswordHandler.register(mobile_input, pin_input, q, a):
                             st.success("Account created!")
                             st.session_state.show_reg_form = False
                             st.rerun()
-                    except AuthenticationError as e:
+                    except auth.AuthenticationError as e:
                         st.error(str(e))
 
         with col_log:
             if st.button("🔐 Login", use_container_width=True):
                 try:
-                    if PasswordHandler.login(mobile_input, pin_input):
+                    if auth.PasswordHandler.login(mobile_input, pin_input):
                         st.session_state.current_user = mobile_input
                         # Persist user ID in query params to survive page refresh if requested
                         if remember_me:
                             st.query_params["u"] = mobile_input
                         st.session_state.auth_method = "PIN"
                         st.rerun()
-                except AuthenticationError as e:
+                except auth.AuthenticationError as e:
                     st.sidebar.error(str(e))
         
         if st.sidebar.button("❓ Forgot PIN?", use_container_width=True):
@@ -192,15 +188,15 @@ def render_auth_ui():
         if st.session_state.get("forgot_pin_flow", False):
             with st.sidebar.expander("Recover PIN", expanded=True):
                 try:
-                    question = PasswordHandler.get_user_security_question(mobile_input)
+                    question = auth.PasswordHandler.get_user_security_question(mobile_input)
                     st.write(f"**Question**: {question}")
                     ans = st.text_input("Security Answer", type="password")
                     if st.button("Verify & Show New PIN"):
-                        new_p = PasswordHandler.verify_answer_and_reset_pin(mobile_input, ans)
+                        new_p = auth.PasswordHandler.verify_answer_and_reset_pin(mobile_input, ans)
                         st.success(f"Recovery Successful!")
                         st.code(f"Your NEW PIN is: {new_p}")
                         st.warning("⚠️ Write this down! This message will disappear on refresh.")
-                except AuthenticationError as e:
+                except auth.AuthenticationError as e:
                     st.error(str(e))
                 if st.button("Cancel"):
                     st.session_state.forgot_pin_flow = False
