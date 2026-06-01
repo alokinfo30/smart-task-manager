@@ -125,10 +125,11 @@ def load_todo_df(current_user):
         mask = (df['Status'] == 'Done') & (df['CompletedAt'].notna()) & (df['CompletedAt'] < cutoff)
         if mask.any():
             df = df[~mask]
-            try:
-                df.to_csv(tools.TODO_FILE, index=False)
-            except Exception:
-                pass
+            with tools.file_lock: # Use thread lock from tools.py
+                try:
+                    df.to_csv(tools.TODO_FILE, index=False)
+                except Exception:
+                    pass
 
     # Privacy Filtering: owner OR explicitly shared. Guests only see their own tasks.
     def is_visible(row):
@@ -209,12 +210,12 @@ def render_auth_ui():
                         st.session_state.current_user = mobile_input
                         # Persist user ID in query params to survive page refresh if requested
                         if remember_me:
-                            st.experimental_set_query_params(u=mobile_input)
+                            st.query_params["u"] = mobile_input
                         st.session_state.auth_method = "PIN"
                         st.rerun()
                 except auth.AuthenticationError as e:
                     st.sidebar.error(str(e))
-        
+
         if st.sidebar.button("❓ Forgot PIN?", use_container_width=True):
             st.session_state.forgot_pin_flow = True
 
@@ -247,7 +248,7 @@ def render_auth_ui():
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             st.session_state.current_user = "guest"
             st.session_state.auth_method = None
-            st.experimental_set_query_params()
+            st.query_params.clear()
             st.rerun()
         
         return st.session_state.current_user
@@ -390,32 +391,9 @@ def render_dashboard(current_user):
             if current_user == "guest":
                 st.error("Please log in to add tasks.")
             else:
-                # Create a new empty row with default values
-                new_row = pd.DataFrame([{
-                    "Date": datetime.now().date(),
-                    "Task": "New task...",
-                    "Status": "Pending",
-                    "Priority": "High",
-                    "CompletedAt": None,
-                    "Owner": current_user,
-                    "SharedWith": "" # Default to not shared with anyone
-                }])
-                
-                # Persist to file immediately so it appears after rerun
-                if os.path.exists(tools.TODO_FILE):
-                    full_df = pd.read_csv(tools.TODO_FILE)
-                else:
-                    full_df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
-                
-                # Ensure required columns exist before concat
-                required_cols = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
-                for col in required_cols:
-                    if col not in full_df.columns:
-                        full_df[col] = "High" if col == "Priority" else (current_user if col == "Owner" else ("" if col == "SharedWith" else None))
-                
-                final_df = pd.concat([full_df, new_row], ignore_index=True)
-                final_df.to_csv(tools.TODO_FILE, index=False)
-                st.rerun() # Rerun to show the new row in the editor
+                # Use the centralized tool function to handle locking and formatting correctly
+                tools.add_task(task="New task...", priority="High", owner=current_user)
+                st.rerun()
 
         # Add a temporary 'Delete' column for the editor
         df_editor = df.copy()
