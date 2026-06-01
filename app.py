@@ -50,7 +50,7 @@ def init_session_state():
 def load_todo_df(current_user):
     """Loads the todo list into a DataFrame, handles 24h deletion, and sorts."""
     required_cols = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
-    
+
     try:
         if os.path.exists(tools.TODO_FILE):
             df = pd.read_csv(tools.TODO_FILE)
@@ -59,52 +59,82 @@ def load_todo_df(current_user):
     except Exception:
         df = pd.DataFrame(columns=required_cols)
 
-    # Ensure all required columns exist
-    for col in required_cols:
-        if col not in df.columns:
-            df[col] = "High" if col == "Priority" else (current_user if col == "Owner" else ("" if col == "SharedWith" else None))
-    
+    # Drop legacy/unused columns
     if 'Time' in df.columns:
         df = df.drop(columns=['Time'])
 
-    # Ensure SharedWith is string type to prevent Streamlit editor errors (e.g. inferred as FLOAT)
+    # Ensure required columns exist with safe defaults and proper dtypes
+    for col in required_cols:
+        if col not in df.columns:
+            if col == 'Priority':
+                df[col] = 'High'
+            elif col == 'Owner':
+                df[col] = current_user
+            elif col == 'SharedWith':
+                df[col] = ''
+            elif col == 'Date':
+                # Use NaT-aware dtype
+                df[col] = pd.Series([pd.NaT] * len(df))
+            elif col == 'CompletedAt':
+                df[col] = pd.Series([pd.NaT] * len(df))
+            else:
+                df[col] = None
+
+    # Normalize SharedWith to string to avoid float inference
     df['SharedWith'] = df['SharedWith'].fillna('').astype(str).replace('nan', '')
+
+    # Convert CompletedAt to datetime safely
+    try:
+        df['CompletedAt'] = pd.to_datetime(df['CompletedAt'], errors='coerce')
+    except Exception:
+        df['CompletedAt'] = pd.to_datetime(pd.Series([pd.NaT] * len(df)))
 
     # --- Logic: Auto-delete "Done" tasks after 24 hours ---
     if not df.empty:
-        df['CompletedAt'] = pd.to_datetime(df['CompletedAt'], errors='coerce')
         cutoff = datetime.now() - timedelta(hours=24)
-        # Keep if not Done OR if Done but completed less than 24h ago
         mask = (df['Status'] == 'Done') & (df['CompletedAt'].notna()) & (df['CompletedAt'] < cutoff)
         if mask.any():
             df = df[~mask]
-            df.to_csv(tools.TODO_FILE, index=False)
-    
-    # Final check to ensure columns exist before filtering
-    for col in required_cols:
-        if col not in df.columns:
-            df[col] = None
+            try:
+                df.to_csv(tools.TODO_FILE, index=False)
+            except Exception:
+                pass
 
     # Privacy Filtering: owner OR explicitly shared. Guests only see their own tasks.
     def is_visible(row):
-        if row['Owner'] == current_user: return True
-        if current_user == "guest": return False
-        shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
-        return current_user in shared_list
+        try:
+            if row.get('Owner') == current_user:
+                return True
+            if current_user == "guest":
+                return False
+            shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
+            return current_user in shared_list
+        except Exception:
+            return False
 
     if not df.empty:
         user_mask = df.apply(is_visible, axis=1)
         df = df[user_mask].copy()
 
-    # Always convert Date to ensure st.data_editor compatibility
-    if not df.empty and 'Date' in df.columns:
+    # Ensure Date column exists and convert to date objects for Streamlit
+    if 'Date' not in df.columns:
+        df['Date'] = pd.Series([pd.NaT] * len(df))
+    try:
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
-    
+    except Exception:
+        # Last-resort: fill with NaT/date.today placeholders to keep types consistent
+        df['Date'] = pd.Series([datetime.now().date() if pd.isna(x) else x for x in df.get('Date', pd.Series([pd.NaT] * len(df)))])
+
     # Automatic sorting by Date
     if not df.empty:
         priority_order = {"High": 0, "Medium": 1, "Low": 2}
         df['p_val'] = df['Priority'].map(priority_order).fillna(3)
-        df = df.sort_values(by=["Date", "p_val"]).drop(columns=['p_val']).reset_index(drop=True)
+        try:
+            df = df.sort_values(by=["Date", "p_val"]).drop(columns=['p_val']).reset_index(drop=True)
+        except Exception:
+            # If sorting fails due to mixed types, fallback to unsorted
+            df = df.drop(columns=['p_val']).reset_index(drop=True)
+
     return df
 
 def render_auth_ui():
