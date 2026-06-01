@@ -476,7 +476,12 @@ def main():
                 final_prompt = user_command
                 
                 # Update UI display
-                st.session_state.chat_display.append({"role": "user", "content": final_prompt})
+                st.session_state.chat_display.append({
+                    "role": "user", 
+                    "content": final_prompt,
+                    "timestamp": datetime.now().isoformat(),
+                    "archived": False
+                })
                 with chat_container.chat_message("user"):
                     st.write(final_prompt)
 
@@ -491,7 +496,12 @@ def main():
                             final_prompt, st.session_state.agent_history, user_id=current_user
                         )
                         st.session_state.agent_history = updated_history
-                        st.session_state.chat_display.append({"role": "assistant", "content": report_content})
+                        st.session_state.chat_display.append({
+                            "role": "assistant", 
+                            "content": report_content,
+                            "timestamp": datetime.now().isoformat(),
+                            "archived": False
+                        })
                         # Persist state after successful agent execution
                         save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
                 finally:
@@ -508,17 +518,24 @@ def main():
             else:
                 # Allow users to selectively save messages for future reference
                 if st.button("💾 Archive Selected Messages", use_container_width=True):
-                    # Filter messages based on selection checkboxes
-                    selected_msgs = [
-                        f"{msg['role'].upper()}: {msg['content']}" 
-                        for i, msg in enumerate(st.session_state.chat_display)
-                        if st.session_state.get(f"sel_{i}", False)
-                    ]
+                    selected_indices = [i for i, msg in enumerate(st.session_state.chat_display) if st.session_state.get(f"sel_{i}", False)]
                     
-                    if selected_msgs:
+                    if selected_indices:
+                        selected_msgs = [
+                            f"{st.session_state.chat_display[i]['role'].upper()}: {st.session_state.chat_display[i]['content']}" 
+                            for i in selected_indices
+                        ]
                         archive_content = "\n".join(selected_msgs)
                         status_msg = tools.log_report(archive_content)
+
                         if "Success" in status_msg:
+                            # Mark selected messages as archived in session state
+                            for i in selected_indices:
+                                st.session_state.chat_display[i]["archived"] = True
+                            
+                            # Persist the 'archived' status to disk
+                            save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
+                            
                             st.toast(status_msg, icon="✅")
                             time.sleep(1) # Allow user to see the confirmation
                             st.rerun()

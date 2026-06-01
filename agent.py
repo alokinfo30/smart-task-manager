@@ -8,8 +8,8 @@ import json
 
 load_dotenv()
 
-# Use Gemma 4 models for lifetime-free, unlimited conversation (no quota limits)
-MODEL_FALLBACKS = ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
+# Use Gemini 1.5 models as they support the required Tool Use/Function Calling features.
+MODEL_FALLBACKS = ["gemini-1.5-flash", "gemini-1.5-pro"]
 
 # Configure Gemini AI client
 # Ensure GOOGLE_API_KEY is set in your environment variables
@@ -75,11 +75,42 @@ def load_chat_state(user_id):
     if not history_file or not os.path.exists(history_file):
         return {"agent_history": [], "chat_display": []}
 
-    if os.path.exists(history_file):
+    # Check if file exists and is not empty to prevent parsing errors
+    if os.path.exists(history_file) and os.path.getsize(history_file) > 0:
         try:
             with open(history_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e: # Catching all exceptions for robustness
+                data = json.load(f)
+            
+            # Auto-delete non-archived messages older than 8 hours (28,800 seconds)
+            now = datetime.now()
+            cutoff_sec = 8 * 3600
+            chat_display = data.get("chat_display", [])
+            
+            new_display = []
+            deleted_any = False
+            for msg in chat_display:
+                ts_str = msg.get("timestamp")
+                is_archived = msg.get("archived", False)
+                
+                if ts_str:
+                    try:
+                        ts = datetime.fromisoformat(ts_str)
+                        if (now - ts).total_seconds() > cutoff_sec and not is_archived:
+                            deleted_any = True
+                            continue # Remove this message from history
+                    except (ValueError, TypeError):
+                        pass
+                new_display.append(msg)
+            
+            if deleted_any:
+                data["chat_display"] = new_display
+                # Reset agent history to maintain context integrity with the UI
+                data["agent_history"] = []
+                with open(history_file, "w", encoding="utf-8") as f_out:
+                    json.dump(data, f_out, ensure_ascii=False, indent=2, default=str)
+            
+            return data
+        except (json.JSONDecodeError, Exception) as e:
             print(f"⚠️ Error loading history for {user_id}: {e}")
     return {"agent_history": [], "chat_display": []}
 
