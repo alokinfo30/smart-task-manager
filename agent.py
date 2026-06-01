@@ -200,14 +200,31 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
     # Create parts for the current message (Text + Multimodal Attachments)
     current_parts = [genai.types.Part.from_text(text=prompt)]
 
+    # Wrap tool functions so they always run with an explicit owner (user_id).
+    # This avoids losing thread-local context when the model runtime invokes functions.
+    def read_todo_list_owner(*args, **kwargs):
+        return tools.read_todo_list()
+
+    def add_task_owner(task: str = "test task", priority: str = "High", date: str = None, shared_with_mobiles: str = "", **kwargs):
+        return tools.add_task(task=task, priority=priority, date=date, shared_with_mobiles=shared_with_mobiles, owner=user_id)
+
+    def delete_task_owner(task_identifier: str, **kwargs):
+        return tools.delete_task(task_identifier, owner=user_id)
+
+    def update_task_status_owner(task_identifier: str, new_status: str, **kwargs):
+        return tools.update_task_status(task_identifier, new_status, owner=user_id)
+
+    def log_report_owner(report_content: str, **kwargs):
+        return tools.log_report(report_content)
+
     config = genai.types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION,
         tools=[
-            tools.read_todo_list, 
-            tools.add_task, 
-            tools.delete_task, 
-            tools.update_task_status, 
-            tools.log_report
+            read_todo_list_owner,
+            add_task_owner,
+            delete_task_owner,
+            update_task_status_owner,
+            log_report_owner,
         ],
         automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(),
         temperature=0.25,
@@ -248,6 +265,16 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
                 continue
             break
 
+    # If the model was unavailable due to high demand, attempt a safe fallback:
+    if last_error:
+        le = str(last_error)
+        if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
+            try:
+                # Fallback: add the user's prompt as a task directly for persistence
+                add_result = add_task_owner(task=prompt)
+                return f"Model unavailable; fallback executed. {add_result}", history or []
+            except Exception as e:
+                return f"Error: {str(last_error)}; fallback add failed: {e}", history or []
     return f"Error: {str(last_error)}", history or []
 
 if __name__ == "__main__":

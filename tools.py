@@ -55,7 +55,7 @@ def read_todo_list() -> str:
     except Exception as e:
         return f"Error reading tasks: {str(e)}"
 
-def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_mobiles: str = "") -> str:
+def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_mobiles: str = "", owner: str = None) -> str:
     """
     Appends a new task to the todo list.
     
@@ -83,14 +83,14 @@ def add_task(task: str = "test task", priority: str = "High", date: str = None, 
                 "Status": "Pending",
                 "Priority": priority,
                 "CompletedAt": "",
-                "Owner": get_current_user(),
+                "Owner": owner if owner else get_current_user(),
                 "SharedWith": shared_with_mobiles
             })
         return f"Success: Task '{task}' added successfully."
     except Exception as e:
         return f"Error adding task: {str(e)}"
 
-def delete_task(task_identifier: str) -> str:
+def delete_task(task_identifier: str, owner: str = None) -> str:
     """
     Deletes tasks from the todo list based on a keyword match in the task description.
     
@@ -104,7 +104,7 @@ def delete_task(task_identifier: str) -> str:
         
         df = pd.read_csv(TODO_FILE)
         initial_rows = len(df)
-        user = get_current_user()
+        user = owner if owner else get_current_user()
         
         # Match task keyword AND check ownership
         mask = (df['Task'].str.contains(task_identifier, case=False, na=False)) & (df['Owner'] == user)
@@ -127,7 +127,7 @@ def delete_task(task_identifier: str) -> str:
     except Exception as e:
         return f"Error deleting task: {str(e)}"
 
-def update_task_status(task_identifier: str, new_status: str) -> str:
+def update_task_status(task_identifier: str, new_status: str, owner: str = None) -> str:
     """
     Updates the status of tasks matching the identifier (e.g., from 'Pending' to 'Done').
     
@@ -141,7 +141,7 @@ def update_task_status(task_identifier: str, new_status: str) -> str:
             return f"Error: Task file '{TODO_FILE}' not found."
         
         df = pd.read_csv(TODO_FILE)
-        user = get_current_user()
+        user = owner if owner else get_current_user()
         
         # Ensure 'SharedWith' column exists for filtering
         if 'SharedWith' not in df.columns:
