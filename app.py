@@ -572,10 +572,10 @@ def render_dashboard(current_user):
         # Display previous conversation
         chat_container = st.container(height=300, border=True)
         for i, msg in enumerate(st.session_state.chat_display):
-            with chat_container.chat_message(msg["role"]):
+            with chat_container.chat_message(msg["role"]): # type: ignore
                 col_text, col_sel = st.columns([0.9, 0.1])
                 col_text.write(msg["content"])
-                col_sel.checkbox("💾", key=f"sel_{i}", value=True, help="Select for archival", label_visibility="collapsed")
+                col_sel.checkbox("💾", key=f"sel_{i}", value=(i == len(st.session_state.chat_display) - 1), help="Select for archival", label_visibility="collapsed")
 
         user_command = st.chat_input("Ask your assistant...")
         
