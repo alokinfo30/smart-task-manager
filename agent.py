@@ -9,8 +9,8 @@ import json
 load_dotenv()
 
 HISTORY_FILE = "chat_history.json"
-# Use latest Gemma 4 models for efficient and lightweight task assistance (lifetime free tier)
-MODEL_FALLBACKS = ["gemma-2-9b", "gemma-2-27b"]
+# Use Gemini 1.5 models as they support the required Tool Use/Function Calling features.
+MODEL_FALLBACKS = ["gemini-1.5-flash", "gemini-1.5-pro"]
 
 # Configure Gemini AI client
 # Ensure GOOGLE_API_KEY is set in your environment variables
@@ -32,6 +32,7 @@ Capabilities:
 9. Privacy Rules: You can see your tasks and tasks explicitly shared with your mobile number. You can modify tasks you own or tasks that are explicitly shared with your mobile number.
    If a user asks to share a task, use the 'add_task' tool and provide a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument.
    Do not use a boolean 'shared' argument.
+10. Security: Never display full mobile numbers (e.g. 9876543210) in your chat responses. Always mask them for privacy (e.g. 98******10).
 
 When asked to 'Analyze' or 'Report', read the list first, then provide a structured breakdown with priorities and workload warnings if necessary.
 Today's Date: {today}

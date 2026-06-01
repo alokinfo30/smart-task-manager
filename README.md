@@ -1,4 +1,4 @@
-An AI-powered task assistant using Streamlit and Gemma, featuring automated analysis, persistent history, and real-time productivity metrics tracking.
+An AI-powered task assistant using Streamlit and Gemini, featuring automated analysis, persistent history, and real-time productivity metrics tracking.
 
 Run Frointend At local using
 streamlit run d:\project\smart-task-manager\app.py 
@@ -35,7 +35,7 @@ The agent strictly follows "Privacy Rules" defined in agent.py and tools.py:
 
 It ensures it only views or modifies tasks that belong to your user_id or tasks explicitly shared with your mobile number in the SharedWith field.
 Technical Implementation Note
-The "Agentic" nature is powered by the Gemma 2 model configured with automatic_function_calling=True. This allows the model to:
+The "Agentic" nature is powered by the Gemini 1.5 Flash model configured with automatic_function_calling=True. This allows the model to:
 
 Stop generating text when it realizes it needs more information.
 Call a Python function from tools.py.

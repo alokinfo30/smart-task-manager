@@ -28,6 +28,15 @@ from auth import (
 
 load_dotenv()
 
+def mask_mobile(mobile):
+    """Helper to mask mobile numbers for privacy."""
+    val = str(mobile).strip()
+    if not val or val.lower() == "nan" or val.lower() == "guest":
+        return "guest" if val.lower() == "guest" else ""
+    if len(val) <= 4:
+        return "****"
+    return f"{val[:2]}******{val[-2:]}"
+
 def init_session_state():
     """Initialize session state for authentication."""
     if "current_user" not in st.session_state:
@@ -141,7 +150,7 @@ def render_auth_ui():
         
     else:
         # User is logged in
-        st.sidebar.success(f"✅ Logged in as: **{st.session_state.current_user}**")
+        st.sidebar.success(f"✅ Logged in as: **{mask_mobile(st.session_state.current_user)}**")
         auth_method_display = f" ({st.session_state.auth_method})" if st.session_state.auth_method else ""
         st.sidebar.caption(f"Auth Method: {auth_method_display}")
         
@@ -214,6 +223,13 @@ def main():
     # 2. Status Overview (Styled Table)
     display_df = df.copy()
     if not df.empty:
+        # Mask sensitive info in the overview table
+        display_df["Owner"] = display_df["Owner"].apply(mask_mobile)
+        if "SharedWith" in display_df.columns:
+            display_df["SharedWith"] = display_df["SharedWith"].apply(
+                lambda x: ", ".join([mask_mobile(s.strip()) for s in str(x).split(",") if s.strip()]) if x else ""
+            )
+
         search_query = st.text_input("🔍 Search tasks (name, status, or priority):", "").lower()
         if search_query:
             display_df = display_df[display_df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)]
@@ -292,6 +308,13 @@ def main():
         # Add a temporary 'Delete' column for the editor
         df_editor = df.copy()
         df_editor.insert(0, "🗑️", False)
+        
+        # Mask sensitive info in the editor while storing original values to restore on save
+        original_metadata = df[['Owner', 'SharedWith']].to_dict('index')
+        df_editor["Owner"] = df_editor["Owner"].apply(mask_mobile)
+        df_editor["SharedWith"] = df_editor["SharedWith"].apply(
+            lambda x: ", ".join([mask_mobile(s.strip()) for s in str(x).split(",") if s.strip()]) if x else ""
+        )
 
         edited_df = st.data_editor(
             df_editor,
@@ -324,6 +347,22 @@ def main():
             # 1. Filter out rows marked for deletion
             save_df = edited_df[edited_df["🗑️"] == False].drop(columns=["🗑️"])
             
+            # 2. Restore real Mobile Numbers from masked versions before saving
+            for idx, row in save_df.iterrows():
+                if idx in original_metadata:
+                    # Restore Owner (Disabled field, so always restore original)
+                    save_df.at[idx, 'Owner'] = original_metadata[idx]['Owner']
+                    
+                    # Restore SharedWith (Check if user entered new numbers or kept the masked ones)
+                    current_val = str(row['SharedWith'])
+                    if "*" in current_val:
+                        # User didn't overwrite with new numbers, restore original list
+                        save_df.at[idx, 'SharedWith'] = original_metadata[idx]['SharedWith']
+                    # else: user typed new numbers, keep as is
+                else:
+                    # New task row (appended via button)
+                    save_df.at[idx, 'Owner'] = current_user
+
             # Logic: If status changed to 'Done', record timestamp
             for idx, row in save_df.iterrows():
                 # Determine if this was a new row or if the index exists in the original df
