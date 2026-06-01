@@ -2,16 +2,15 @@
 import os
 from dotenv import load_dotenv
 from google import genai
-from tools import read_todo_list, add_task, delete_task, update_task_status, log_report
+import tools
 from datetime import datetime
 import json
 
 load_dotenv()
 
 HISTORY_FILE = "chat_history.json"
-# Use free Gemma models by default (no paid quota limits).
-# Ordered list: preferred -> fallback.
-MODEL_FALLBACKS = ["models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+# Use latest Gemma 4 models for efficient and lightweight task assistance (lifetime free tier)
+MODEL_FALLBACKS = ["gemma-2-9b", "gemma-2-27b"]
 
 # Configure Gemini AI client
 # Ensure GOOGLE_API_KEY is set in your environment variables
@@ -28,6 +27,11 @@ Capabilities:
 4. Break down complex tasks into smaller, actionable sub-steps.
 5. Maintain a professional, encouraging, and organized tone.
 6. Use the 'log_report' tool whenever you generate a detailed analysis, summary, or when the user asks to 'save' a response.
+7. When adding a task, only ask the user for the task name. You must automatically set the priority to 'High' and the date to the current date (today) when calling the 'add_task' tool. You can also specify a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument if the user wants to share the task with specific individuals.
+8. Motivation: Encourage users to improve their 'Sprint Speed' and reach 'Elite Executioner' rank by completing tasks quickly. Provide positive reinforcement.
+9. Privacy Rules: You can see your tasks and tasks explicitly shared with your mobile number. You can modify tasks you own or tasks that are explicitly shared with your mobile number.
+   If a user asks to share a task, use the 'add_task' tool and provide a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument.
+   Do not use a boolean 'shared' argument.
 
 When asked to 'Analyze' or 'Report', read the list first, then provide a structured breakdown with priorities and workload warnings if necessary.
 Today's Date: {today}
@@ -54,7 +58,6 @@ def save_chat_state(agent_history, chat_display):
         "chat_display": chat_display
     }
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        # Use default=str to safely handle bytes objects in multimodal parts (voice/files)
         json.dump(state, f, ensure_ascii=False, indent=2, default=str)
 
 def load_chat_state():
@@ -122,9 +125,9 @@ def normalize_history(history):
                     ))
             elif "content" in item:
                 normalized.append(genai.types.Content(
-                parts=[genai.types.Part(text=text)],
-                role=role,
-            ))
+                    parts=[genai.types.Part(text=item["content"])],
+                    role=role
+                ))
         elif isinstance(item, genai.types.Content):
             # Convert assistant role to model role if needed
             if item.role == "assistant":
@@ -136,24 +139,31 @@ def normalize_history(history):
     return normalized
 
 
-def run_autonomous_agent(prompt: str, history: list = None, attachments: list = None):
+def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "guest") -> tuple[str, list]:
     if not api_key or not client:
         return "Error: GOOGLE_API_KEY not found. Please set it to use the Agentic AI features.", history or []
 
-    print(f"🚀 Initializing Personal Assistant...")
-    print(f"📝 Thinking about: {prompt}\n")
+    # Initialization logs (ASCII-only to avoid encoding issues)
+    print("Initializing Personal Assistant...")
+    print(f"User: {user_id} | Thinking about: {prompt}\n")
+
+    # Set the user context for the tools
+    tools.context.user = user_id
 
     messages = normalize_history(history)
     
     # Create parts for the current message (Text + Multimodal Attachments)
     current_parts = [genai.types.Part.from_text(text=prompt)]
-    if attachments:
-        for data, mime_type in attachments:
-            current_parts.append(genai.types.Part.from_bytes(data=data, mime_type=mime_type))
 
     config = genai.types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION,
-        tools=[read_todo_list, add_task, delete_task, update_task_status, log_report],
+        tools=[
+            tools.read_todo_list, 
+            tools.add_task, 
+            tools.delete_task, 
+            tools.update_task_status, 
+            tools.log_report
+        ],
         automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(),
         temperature=0.25,
     )
@@ -168,20 +178,21 @@ def run_autonomous_agent(prompt: str, history: list = None, attachments: list = 
             )
             response = chat.send_message(current_parts)
             response_text = extract_response_text(response)
-            # Retrieve the chat history via the client helper
+            
+            # Retrieve the chat history using the SDK method
             try:
                 updated_history = chat.get_history()
             except Exception:
-                # Fallback: append the current turn to messages
-                updated_history = messages + [genai.types.Content(parts=[genai.types.Part(text=response_text)], role="model")]
+                # Fallback: no history available, return prior history
+                updated_history = history or []
 
-            print(f"✅ [Task Complete] Using model: {model_name}")
+            print(f"[Task Complete] Using model: {model_name}")
             return response_text, updated_history
 
         except Exception as e:
             last_error = e
             error_text = str(e)
-            print(f"⚠️ Model {model_name} failed: {error_text}")
+            print(f"Model {model_name} failed: {error_text}")
             if "RESOURCE_EXHAUSTED" in error_text or "quota" in error_text.lower():
                 return (
                     "Error: Resource exhausted or quota limit reached. "

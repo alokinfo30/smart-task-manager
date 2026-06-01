@@ -15,18 +15,33 @@ if sys.platform == 'win32':
 import streamlit as st
 import os
 from dotenv import load_dotenv
+import time
 import pandas as pd
 from io import StringIO
 from datetime import datetime, timedelta
 from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state
 from tools import TODO_FILE, log_report
+from auth import (
+    PasswordHandler,
+    AuthenticationError,
+)
 
 load_dotenv()
 
-def load_todo_df():
+def init_session_state():
+    """Initialize session state for authentication."""
+    if "current_user" not in st.session_state:
+        # Check for persistent session in query parameters to handle page refreshes
+        if "u" in st.query_params:
+            st.session_state.current_user = st.query_params["u"]
+            st.session_state.auth_method = "PIN"
+        else:
+            st.session_state.current_user = "guest"
+
+def load_todo_df(current_user):
     """Loads the todo list into a DataFrame, handles 24h deletion, and sorts."""
     if not os.path.exists(TODO_FILE):
-        df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt"])
+        df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
     else:
         try:
             df = pd.read_csv(TODO_FILE)
@@ -34,12 +49,23 @@ def load_todo_df():
             if 'Time' in df.columns:
                 df = df.drop(columns=['Time'])
         except Exception:
-            df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt"])
+            df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
 
     # Ensure all required columns exist
-    for col in ["Date", "Task", "Status", "Priority", "CompletedAt"]:
+    required_cols = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
+    for col in required_cols:
         if col not in df.columns:
-            df[col] = "High" if col == "Priority" else None
+            if col == "Priority":
+                df[col] = "High"
+            elif col == "Owner":
+                df[col] = "guest"
+            elif col == "SharedWith":
+                df[col] = ""
+            else:
+                df[col] = None
+    
+    # Ensure SharedWith is string type to prevent Streamlit editor errors (e.g. inferred as FLOAT)
+    df['SharedWith'] = df['SharedWith'].fillna('').astype(str).replace('nan', '')
 
     # --- Logic: Auto-delete "Done" tasks after 24 hours ---
     if not df.empty:
@@ -51,19 +77,90 @@ def load_todo_df():
             df = df[~mask]
             df.to_csv(TODO_FILE, index=False)
     
+    # Privacy Filtering: owner OR explicitly shared. Guests only see their own tasks.
+    def is_visible(row):
+        if row['Owner'] == current_user: return True
+        if current_user == "guest": return False
+        shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
+        return current_user in shared_list
+
+    user_mask = df.apply(is_visible, axis=1)
+    df = df[user_mask].copy()
+
     # Always convert Date to ensure st.data_editor compatibility
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
     
     # Automatic sorting by Date
     if not df.empty:
-        # Sort by Date (Ascending) and Priority (High -> Medium -> Low)
         priority_order = {"High": 0, "Medium": 1, "Low": 2}
         df['p_val'] = df['Priority'].map(priority_order).fillna(3)
         df = df.sort_values(by=["Date", "p_val"]).drop(columns=['p_val']).reset_index(drop=True)
     return df
 
+def render_auth_ui():
+    """Render the secure authentication UI with encrypted PIN."""
+    st.sidebar.title("🔐 Secure Authentication")
+    
+    init_session_state()
+    
+    if st.session_state.current_user == "guest":
+        st.sidebar.subheader("PIN Authentication")
+        mobile_input = st.sidebar.text_input("Mobile Number", placeholder="e.g. 9876543210", key="auth_mobile")
+        pin_input = st.sidebar.text_input("6-Digit PIN", type="password", help="Enter your 6-digit PIN", key="auth_pin")
+        remember_me = st.sidebar.checkbox("Remember Me", value=True, help="Keep me logged in even after page refresh")
+
+        if not mobile_input or len(mobile_input) < 10:
+            st.sidebar.warning("⚠️  Enter a valid mobile number")
+            return None
+
+        col_reg, col_log = st.sidebar.columns(2)
+
+        with col_reg:
+            if st.button("📝 Register", use_container_width=True):
+                try:
+                    if PasswordHandler.register(mobile_input, pin_input):
+                        st.sidebar.success("Account created! You can now login.")
+                except AuthenticationError as e:
+                    st.sidebar.error(str(e))
+
+        with col_log:
+            if st.button("🔐 Login", use_container_width=True):
+                try:
+                    if PasswordHandler.login(mobile_input, pin_input):
+                        st.session_state.current_user = mobile_input
+                        # Persist user ID in query params to survive page refresh if requested
+                        if remember_me:
+                            st.query_params["u"] = mobile_input
+                        st.session_state.auth_method = "PIN"
+                        st.rerun()
+                except AuthenticationError as e:
+                    st.sidebar.error(str(e))
+        
+        st.sidebar.divider()
+        return None
+        
+    else:
+        # User is logged in
+        st.sidebar.success(f"✅ Logged in as: **{st.session_state.current_user}**")
+        auth_method_display = f" ({st.session_state.auth_method})" if st.session_state.auth_method else ""
+        st.sidebar.caption(f"Auth Method: {auth_method_display}")
+        
+        if st.sidebar.button("🚪 Logout", use_container_width=True):
+            st.session_state.current_user = "guest"
+            st.session_state.auth_method = None
+            st.query_params.clear()
+            st.rerun()
+        
+        return st.session_state.current_user
+
+
 def main():
     st.set_page_config(page_title="Smart Task Manager", page_icon="🚀", layout="wide")
+    
+    # Render authentication UI
+    current_user = render_auth_ui()
+    if current_user is None:
+        current_user = st.session_state.current_user
     
     # Custom CSS for status font colors
     st.markdown("""
@@ -79,6 +176,10 @@ def main():
     # API Key Warning
     if not os.getenv("GOOGLE_API_KEY"):
         st.error("🔑 **Action Required**: Please set the `GOOGLE_API_KEY` environment variable to enable Agentic AI features.")
+    
+    # Guest Account Warning
+    if current_user == "guest":
+        st.warning("⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.")
 
     def style_status(row):
         color = ''
@@ -87,7 +188,7 @@ def main():
         elif row['Status'] == 'Done': color = 'color: #008000; font-weight: bold;'
         return [color if i == 'Status' else '' for i in row.index]
 
-    df = load_todo_df()
+    df = load_todo_df(current_user)
     
     # 1. Dashboard Metrics
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -96,12 +197,12 @@ def main():
     m3.metric("Working 🛠️", len(df[df["Status"] == "Working"]))
     m4.metric("Done ✅", len(df[df["Status"] == "Done"]))
     
-    # New AI Feature: Productivity Score
+    # Motivational Productivity Score
     if not df.empty:
         score = (len(df[df["Status"] == "Done"]) / len(df)) * 100
-        m5.metric("Efficiency 🚀", f"{score:.0f}%")
+        m5.metric("Sprint Speed ⚡", f"{score:.0f}%")
     else:
-        m5.metric("Efficiency 🚀", "0%")
+        m5.metric("Sprint Speed ⚡", "0%")
 
     # 2. Workload Health Notification
     pending_count = len(df[df["Status"] == "Pending"])
@@ -124,18 +225,36 @@ def main():
                 hide_index=True
             )
         
-        # Add a visual chart for Status Distribution
-        with st.expander("📊 Task Distribution", expanded=False):
-            status_counts = display_df['Status'].value_counts().sort_index()
-            # Transpose to make each status a column so colors can be mapped individually
-            chart_data = status_counts.to_frame().T
-            color_map = {
-                "Pending": "#FF4B4B",
-                "Working": "#FFD700",
-                "Done": "#008000"
-            }
-            chart_colors = [color_map.get(status, "#CCCCCC") for status in chart_data.columns]
-            st.bar_chart(chart_data, color=chart_colors)
+        # Replace Task Distribution with Motivational Gamification System
+        with st.expander("🏆 Productivity Rank & Quick Wins", expanded=True):
+            if not df.empty:
+                done_count = len(df[df["Status"] == "Done"])
+                total_count = len(df)
+                efficiency = (done_count / total_count) * 100
+                
+                # Determine Rank based on Efficiency
+                rank_title = "Rookie"
+                rank_icon = "🔰"
+                if efficiency >= 90: rank_title, rank_icon = "Elite Executioner", "👑"
+                elif efficiency >= 70: rank_title, rank_icon = "Productivity Pro", "🛡️"
+                elif efficiency >= 40: rank_title, rank_icon = "Busy Bee", "🐝"
+                
+                c1, c2 = st.columns([1, 2])
+                c1.subheader(f"{rank_icon} {rank_title}")
+                c2.progress(efficiency / 100, text=f"Sprint Progress: {efficiency:.0f}%")
+                
+                # Quick Win Motivation Logic
+                pending_tasks = df[df["Status"] == "Pending"]
+                if not pending_tasks.empty:
+                    # Select highest priority task as the 'Fast-Track' target
+                    quick_win = pending_tasks[pending_tasks["Priority"] == "High"]
+                    if quick_win.empty: quick_win = pending_tasks
+                    
+                    target_task = quick_win.iloc[0]["Task"]
+                    st.info(f"⚡ **Fast-Track Challenge**: Complete '{target_task}' in the next 15 mins to boost your momentum!")
+                elif total_count > 0:
+                    st.balloons()
+                    st.success("🎉 Board Cleared! You're working at light speed today. Time to celebrate!")
 
     col1, col2 = st.columns([1, 2])
 
@@ -147,12 +266,27 @@ def main():
             # Create a new empty row with default values
             new_row = pd.DataFrame([{
                 "Date": datetime.now().date(),
-                "Task": "test task",
+                "Task": "New task...",
                 "Status": "Pending",
                 "Priority": "High",
-                "CompletedAt": None
+                "CompletedAt": None,
+                "Owner": current_user,
+                "SharedWith": "" # Default to not shared with anyone
             }])
-            df = pd.concat([df, new_row], ignore_index=True)
+            
+            # Persist to file immediately so it appears after rerun
+            if os.path.exists(TODO_FILE):
+                full_df = pd.read_csv(TODO_FILE)
+            else:
+                full_df = pd.DataFrame(columns=["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"])
+            
+            # Ensure required columns exist before concat, including the new 'SharedWith'
+            for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
+                if col not in full_df.columns:
+                    full_df[col] = "High" if col == "Priority" else ("guest" if col == "Owner" else (False if col == "Shared" else None))
+            
+            final_df = pd.concat([full_df, new_row], ignore_index=True)
+            final_df.to_csv(TODO_FILE, index=False)
             st.rerun() # Rerun to show the new row in the editor
 
         # Add a temporary 'Delete' column for the editor
@@ -176,6 +310,8 @@ def main():
                 "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", width="medium"),
                 "Task": st.column_config.TextColumn("Task", width="medium"),
                 "CompletedAt": st.column_config.DatetimeColumn("Completed At", disabled=True, width="small"),
+                "Owner": st.column_config.TextColumn("Owner", disabled=True),
+                "SharedWith": st.column_config.TextColumn("Shared With (Mobile #s)", help="Comma-separated mobile numbers", default=""),
             },
             num_rows="fixed", # Changed to fixed to prevent accidental row generation
             width='stretch',
@@ -202,14 +338,51 @@ def main():
                 elif row['Status'] != 'Done':
                     save_df.at[idx, 'CompletedAt'] = None
             
-            save_df.to_csv(TODO_FILE, index=False)
+            # Reload full file to ensure we don't overwrite other users' data
+            if os.path.exists(TODO_FILE):
+                full_df = pd.read_csv(TODO_FILE)
+                # Ensure required columns exist to avoid KeyError during filtering or processing
+                for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
+                    if col not in full_df.columns:
+                        if col == "Priority": full_df[col] = "High"
+                        elif col == "Owner": full_df[col] = "guest"
+                        elif col == "SharedWith": full_df[col] = ""
+                        else: full_df[col] = None
+                # Cast to string to prevent type mismatch during concat or editing
+                full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).replace('nan', '')
+            else:
+                full_df = pd.DataFrame(columns=save_df.columns)
+            
+            # Logic: Identify rows that belong to the user's view (owned or shared)
+            def check_persistence(row):
+                if row['Owner'] == current_user: return True
+                shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
+                return current_user in shared_list and current_user != 'guest'
+
+            visible_mask = full_df.apply(check_persistence, axis=1)
+            others_tasks = full_df[~visible_mask]
+            
+            final_df = pd.concat([others_tasks, save_df], ignore_index=True)
+            final_df.to_csv(TODO_FILE, index=False)
             st.success("Tasks saved and automatically sorted!")
             st.rerun() # Rerun to reflect changes in the UI and metrics
             
         if btn_col2.button("🗑️ Clear Done", use_container_width=True):
-            # Process edited_df but ignore the temporary delete column
-            cleared_df = edited_df[edited_df["Status"] != "Done"].drop(columns=["🗑️"])
-            cleared_df.to_csv(TODO_FILE, index=False)
+            if os.path.exists(TODO_FILE):
+                full_df = pd.read_csv(TODO_FILE)
+                # Ensure required columns exist to avoid KeyError: 'Owner'
+                for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
+                    if col not in full_df.columns:
+                        if col == "Priority": full_df[col] = "High"
+                        elif col == "Owner": full_df[col] = "guest"
+                        elif col == "SharedWith": full_df[col] = ""
+                        else: full_df[col] = None
+
+                # Keep tasks not owned by user OR tasks owned by user that are NOT Done
+                mask = (full_df['Owner'] != current_user) | (full_df['Status'] != 'Done')
+                final_df = full_df[mask]
+                final_df.to_csv(TODO_FILE, index=False)
+                
             st.toast("Completed tasks archived.")
             st.rerun()
 
@@ -228,33 +401,15 @@ def main():
             with chat_container.chat_message(msg["role"]):
                 st.write(msg["content"])
 
-        # File and Voice inputs
-        with st.expander("📎 Attach Files or Voice", expanded=False):
-            uploaded_files = st.file_uploader("Upload documents/images", accept_multiple_files=True)
-            voice_audio = st.audio_input("Record voice command")
-
         user_command = st.chat_input("Ask your assistant...")
         
-        if user_command or voice_audio:
-            # If user spoke but didn't type, provide a default prompt
-            final_prompt = user_command if user_command else "Please process this voice command and any attached files."
+        if user_command:
+            final_prompt = user_command
             
-            # Process attachments
-            attachments = []
-            if uploaded_files:
-                for f in uploaded_files:
-                    attachments.append((f.read(), f.type))
-            if voice_audio:
-                attachments.append((voice_audio.read(), voice_audio.type))
-
             # Update UI display
             st.session_state.chat_display.append({"role": "user", "content": final_prompt})
             with chat_container.chat_message("user"):
                 st.write(final_prompt)
-                if uploaded_files:
-                    st.caption(f"📎 {len(uploaded_files)} file(s) attached")
-                if voice_audio:
-                    st.caption("🎤 Voice command attached")
 
             # Capture stdout logs to display the agent's logic in the UI
             log_stream = StringIO()
@@ -264,7 +419,7 @@ def main():
             try:
                 with st.spinner("Assistant is thinking..."):
                     report_content, updated_history = run_autonomous_agent(
-                        final_prompt, st.session_state.agent_history, attachments=attachments
+                        final_prompt, st.session_state.agent_history, user_id=current_user
                     )
                     st.session_state.agent_history = updated_history
                     st.session_state.chat_display.append({"role": "assistant", "content": report_content})
@@ -280,11 +435,16 @@ def main():
 
         if st.session_state.chat_display:
             # Allow users to manually save the last assistant response for future reference
-            if st.session_state.chat_display[-1]["role"] == "assistant":
-                if st.button("💾 Archive Last Response", use_container_width=True):
-                    status_msg = log_report(st.session_state.chat_display[-1]["content"])
-                    st.success(status_msg)
-                    st.rerun()
+            # Changed to archive the entire current chat history
+            if st.button("💾 Archive Current Chat", use_container_width=True):
+                # Format the entire chat display for archiving
+                archive_content = "\n".join([
+                    f"{msg['role'].upper()}: {msg['content']}" 
+                    for msg in st.session_state.chat_display
+                ])
+                status_msg = log_report(archive_content)
+                st.success(status_msg)
+                st.rerun()
 
             if st.button("🗑️ Clear Chat History", use_container_width=True):
                 st.session_state.agent_history = []
