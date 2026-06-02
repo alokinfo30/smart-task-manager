@@ -1,0 +1,4 @@
+[server]
+folderWatchBlacklist = ['data']
+# Disables the file watcher to prevent infinite hot-reload loops when data files are updated
+fileWatcherType = "none"

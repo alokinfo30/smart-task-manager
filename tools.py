@@ -7,7 +7,6 @@ import threading
 
 # Constants for file paths (could be moved to .env)
 TODO_FILE = os.getenv("TODO_FILE_PATH", "todo.txt")
-ARCHIVE_DIR = "archives"
 
 # Thread-local storage to keep track of the current user session for the agent
 context = threading.local()
@@ -21,8 +20,7 @@ def get_archive_file_path(user_id: str):
     """Determines the file path for a user's persistent task archive."""
     if user_id == "guest":
         return None # Guests don't have persistent archives
-    os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    return os.path.join(ARCHIVE_DIR, f"daily_summary_{user_id}.txt")
+    return f"daily_summary_{user_id}.txt"
 
 def read_todo_list() -> str:
     """
@@ -129,6 +127,50 @@ def delete_task(task_identifier: str, owner: str = None) -> str:
         return f"Success: Deleted {deleted_count} task(s) matching '{task_identifier}':\n{deleted_summaries}"
     except Exception as e:
         return f"Error deleting task: {str(e)}"
+
+def update_task(task_identifier: str, updates: dict, owner: str = None) -> str:
+    """
+    Updates multiple fields of tasks matching the identifier.
+    
+    Args:
+        task_identifier: A keyword to search for in the task descriptions.
+        updates: A dictionary of fields to update (e.g., {'Date': '2026-07-01', 'Priority': 'Medium'}).
+        owner: Optional owner override.
+    """
+    try:
+        if not os.path.exists(TODO_FILE):
+            return f"Error: Task file '{TODO_FILE}' not found."
+        
+        df = pd.read_csv(TODO_FILE)
+        user = owner if owner else get_current_user()
+        
+        if 'SharedWith' not in df.columns:
+            df['SharedWith'] = ""
+
+        mask = (df['Task'].str.contains(task_identifier, case=False, na=False)) & \
+               ((df['Owner'] == user) | (df['SharedWith'].apply(lambda x: user in str(x).split(',') if pd.notna(x) else False)))
+        
+        if not mask.any():
+            return f"No tasks found matching '{task_identifier}' that you have permission to edit."
+        
+        # Allowed fields for update
+        allowed_fields = ["Date", "Task", "Status", "Priority", "SharedWith"]
+        for field, value in updates.items():
+            if field in allowed_fields:
+                df.loc[mask, field] = value
+                # Special logic for completion timestamps
+                if field == "Status":
+                    if value == "Done":
+                        df.loc[mask, 'CompletedAt'] = datetime.datetime.now().replace(microsecond=0)
+                    else:
+                        df.loc[mask, 'CompletedAt'] = None
+            
+        with file_lock:
+            df.to_csv(TODO_FILE, index=False)
+            
+        return f"Success: Updated {list(updates.keys())} for tasks matching '{task_identifier}'."
+    except Exception as e:
+        return f"Error updating task: {str(e)}"
 
 def update_task_status(task_identifier: str, new_status: str, owner: str = None) -> str:
     """

@@ -236,6 +236,18 @@
     {
       "role": "assistant",
       "content": "OK! I've added **olympic2** to your list for today with High priority. \n\nKeep up the momentum! Every task completed brings you one step closer to becoming an **Elite Executioner**! 🚀"
+    },
+    {
+      "role": "user",
+      "content": "add new task study plan",
+      "timestamp": "2026-06-02T12:29:33.558516",
+      "archived": false
+    },
+    {
+      "role": "assistant",
+      "content": "✅ Added task 'study plan' with High priority for today.",
+      "timestamp": "2026-06-02T12:29:33.559498",
+      "archived": false
     }
   ]
 }

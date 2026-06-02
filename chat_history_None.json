@@ -1,0 +1,11 @@
+{
+  "agent_history": [],
+  "chat_display": [
+    {
+      "role": "assistant",
+      "content": "⏳ **Rate Limit Reached**: You are moving too fast for the free tier! Please wait about 60 seconds for your quota to reset and try again.",
+      "timestamp": "2026-06-02T09:12:18.323021",
+      "archived": false
+    }
+  ]
+}

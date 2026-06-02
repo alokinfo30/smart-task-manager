@@ -15,6 +15,7 @@ load_dotenv()
 
 # Configuration
 PASSWORD_DB = "passwords.json"
+SESSION_DB = "sessions.json"
 HASH_ALGORITHM = "sha256"
 ITERATIONS = 100000
 
@@ -180,3 +181,44 @@ class PasswordHandler:
         user_data["attempts"] = 0
         PasswordDB.save(db)
         return new_pin
+
+
+class SessionManager:
+    """Manages secure, randomized session tokens to avoid exposing mobile numbers in URLs."""
+    
+    @staticmethod
+    def load():
+        if os.path.exists(SESSION_DB):
+            try:
+                with open(SESSION_DB, "r") as f:
+                    return json.load(f)
+            except json.JSONDecodeError:
+                return {}
+        return {}
+        
+    @staticmethod
+    def save(db):
+        with open(SESSION_DB, "w") as f:
+            json.dump(db, f, indent=2)
+            
+    @staticmethod
+    def create_session(mobile: str) -> str:
+        db = SessionManager.load()
+        # Remove old sessions for this user to keep DB clean
+        db = {k: v for k, v in db.items() if v != mobile}
+        token = secrets.token_urlsafe(32)
+        db[token] = mobile
+        SessionManager.save(db)
+        return token
+        
+    @staticmethod
+    def get_mobile_from_session(token: str) -> Optional[str]:
+        db = SessionManager.load()
+        return db.get(token)
+        
+    @staticmethod
+    def clear_session(token: str):
+        db = SessionManager.load()
+        if token in db:
+            del db[token]
+            SessionManager.save(db)

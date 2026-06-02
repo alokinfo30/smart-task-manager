@@ -8,10 +8,10 @@ import json
 
 load_dotenv()
 
-# Use Gemma 4 models for lifetime-free conversation (available on this API)
-MODEL_FALLBACKS = ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
+# Gemini Flash models are available completely FREE of cost on the Google AI Studio Free Tier
+MODEL_FALLBACKS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemma-2-27b-it"]
 
-# Configure AI client (uses Gemma models)
+# Configure AI client
 # Ensure GOOGLE_API_KEY is set in your environment variables
 api_key = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
@@ -35,6 +35,7 @@ Capabilities:
 8. Motivation: Encourage users to improve their 'Sprint Speed' and reach 'Elite Executioner' rank by completing tasks quickly. Provide positive reinforcement.
 9. Privacy Rules: You can see your tasks and tasks explicitly shared with your mobile number. You can modify tasks you own or tasks that are explicitly shared with your mobile number.
    If a user asks to share a task, use the 'add_task' tool and provide a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument.
+   If a user asks to change a task's date, priority, or description, use the 'update_task' tool with the 'updates' dictionary.
    Do not use a boolean 'shared' argument.
 10. Security: Never display full mobile numbers (e.g. 9876543210) in your chat responses. Always mask them for privacy (e.g. 98******10).
 
@@ -104,8 +105,9 @@ def load_chat_state(user_id):
             
             if deleted_any:
                 data["chat_display"] = new_display
-                # Reset agent history in the returned state to maintain context integrity
+                # Reset agent history to maintain context integrity with the UI
                 data["agent_history"] = []
+                # Note: We don't write to disk here to prevent infinite rerun loops on load
             
             return data
         except (json.JSONDecodeError, Exception) as e:
@@ -204,6 +206,9 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
     def delete_task_owner(task_identifier: str, **kwargs):
         return tools.delete_task(task_identifier, owner=user_id)
 
+    def update_task_owner(task_identifier: str, updates: dict, **kwargs):
+        return tools.update_task(task_identifier, updates, owner=user_id)
+
     def update_task_status_owner(task_identifier: str, new_status: str, **kwargs):
         return tools.update_task_status(task_identifier, new_status, owner=user_id)
 
@@ -215,6 +220,7 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
         tools=[
             read_todo_list_owner,
             add_task_owner,
+            update_task_owner,
             delete_task_owner,
             update_task_status_owner,
             log_report_owner,
@@ -255,8 +261,8 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
             print(f"Model {model_name} failed: {error_text}")
             if "RESOURCE_EXHAUSTED" in error_text or "quota" in error_text.lower():
                 return (
-                    "Error: Resource exhausted or quota limit reached. "
-                    "Please check your Google API billing/quota or try a different model.",
+                    "⏳ **Rate Limit Reached**: You are moving too fast for the free tier! "
+                    "Please wait about 60 seconds for your quota to reset and try again.",
                     history or [],
                 )
             if "not found" in error_text.lower() or "unsupported" in error_text.lower():
@@ -267,12 +273,7 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
     if last_error:
         le = str(last_error)
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
-            try:
-                # Fallback: add the user's prompt as a task directly for persistence
-                add_result = add_task_owner(task=prompt)
-                return f"Model unavailable; fallback executed. {add_result}", history or []
-            except Exception as e:
-                return f"Error: {str(last_error)}; fallback add failed: {e}", history or []
+            return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments.", history or []
     return f"Error: {str(last_error)}", history or []
 
 if __name__ == "__main__":
