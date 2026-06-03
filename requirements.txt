@@ -1,4 +1,7 @@
 streamlit
 pandas
-google-genai
+websockets
 python-dotenv
+google-genai
+auth0-server-python
+requests
