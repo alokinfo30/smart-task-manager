@@ -20,6 +20,9 @@ import time
 import pandas as pd
 from io import StringIO
 from datetime import datetime, timedelta
+import base64
+import json
+import uuid
 from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state
 import tools # Import the whole module to access context
 from auth import SessionManager, PasswordHandler, AuthenticationError, SECURITY_QUESTIONS
@@ -325,8 +328,333 @@ def style_status(row):
     elif row['Status'] == 'Done': color = 'color: #008000; font-weight: bold;'
     return [color if i == 'Status' else '' for i in row.index]
 
+# --- Routine Alert System ---
+
+# A short, royalty-free notification sound encoded in base64
+BEEP_SOUND_BASE64 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjMyLjEwNAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1axcBAAAAAAAAADhVVT/2R/+3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//ahcBAAAAAAAAADhVVT/2R/+3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//3//-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV-TEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV"
+ROUTINES_FILE = "routines.json"
+
+def load_routines_data():
+    """Load user routines and check-in history from disk."""
+    if os.path.exists(ROUTINES_FILE):
+        try:
+            with open(ROUTINES_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_routines_data(data):
+    """Persist user routines and check-in history to disk."""
+    with open(ROUTINES_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+def check_routine_alerts(current_user):
+    """Displays global alerts for check-ins/outs based on time."""
+    if current_user == "guest":
+        return
+        
+    data = load_routines_data()
+    if current_user not in data:
+        return
+        
+    user_data = data[current_user]
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if today_str not in user_data["history"]:
+        user_data["history"][today_str] = {}
+        save_routines_data(data)
+        
+    today_history = user_data["history"][today_str]
+    current_day_name = datetime.now().strftime("%A")
+    
+    todays_routines = [
+        r for r in user_data["settings"] 
+        if current_day_name in r.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+    ]
+    
+    now = datetime.now()
+    now_time = now.time()
+    alert_triggered = False
+    
+    for r in todays_routines:
+        rid = r["id"]
+        r_hist = today_history.get(rid, {})
+        try:
+            start_time = datetime.strptime(r['start'], "%H:%M").time()
+            end_time = datetime.strptime(r['end'], "%H:%M").time()
+        except ValueError:
+            continue
+            
+        # Check-in Alert
+        if not r_hist.get("check_in") and not r_hist.get("ci_declined"):
+            if now_time >= start_time:
+                ci_snoozes = r_hist.get("ci_snoozes", 0)
+                last_snooze_str = r_hist.get("ci_last_snooze")
+                
+                alert_active = True
+                if last_snooze_str:
+                    try:
+                        last_snooze_dt = datetime.strptime(last_snooze_str, "%H:%M")
+                        last_snooze_dt = now.replace(hour=last_snooze_dt.hour, minute=last_snooze_dt.minute, second=0)
+                        if now < last_snooze_dt + timedelta(minutes=5):
+                            alert_active = False
+                    except ValueError: pass
+                        
+                if alert_active and ci_snoozes < 3:
+                    alert_triggered = True
+                    with st.container(border=True):
+                        st.warning(f"🔔 **Routine Alert**: It is time to start **{r['name']}** ({r['start']}). Are you starting now?")
+                        c1, c2, c3, _ = st.columns([2, 2, 2, 6])
+                        if c1.button("✅ Yes", key=f"alert_ci_yes_{rid}"):
+                            r_hist["check_in"] = now.strftime("%H:%M")
+                            today_history[rid] = r_hist
+                            user_data["history"][today_str] = today_history
+                            save_routines_data(data); st.rerun()
+                        if c2.button("❌ No", key=f"alert_ci_no_{rid}"):
+                            r_hist["ci_declined"] = True
+                            today_history[rid] = r_hist
+                            user_data["history"][today_str] = today_history
+                            save_routines_data(data); st.rerun()
+                        if c3.button(f"💤 Snooze ({3 - ci_snoozes})", key=f"alert_ci_snz_{rid}"):
+                            r_hist["ci_snoozes"] = ci_snoozes + 1
+                            r_hist["ci_last_snooze"] = now.strftime("%H:%M")
+                            today_history[rid] = r_hist
+                            user_data["history"][today_str] = today_history
+                            save_routines_data(data); st.rerun()
+                    break # Show one alert at a time
+
+        # Check-out Alert
+        if r_hist.get("check_in") and not r_hist.get("check_out") and not r_hist.get("co_declined"):
+            if now_time >= end_time:
+                co_snoozes = r_hist.get("co_snoozes", 0)
+                last_snooze_str = r_hist.get("co_last_snooze")
+                
+                alert_active = True
+                if last_snooze_str:
+                    try:
+                        last_snooze_dt = datetime.strptime(last_snooze_str, "%H:%M")
+                        last_snooze_dt = now.replace(hour=last_snooze_dt.hour, minute=last_snooze_dt.minute, second=0)
+                        if now < last_snooze_dt + timedelta(minutes=5):
+                            alert_active = False
+                    except ValueError: pass
+                        
+                if alert_active and co_snoozes < 3:
+                    alert_triggered = True
+                    with st.container(border=True):
+                        st.warning(f"🔔 **Routine Alert**: It is time to end **{r['name']}** ({r['end']}). Are you checking out?")
+                        c1, c2, c3, _ = st.columns([2, 2, 2, 6])
+                        if c1.button("✅ Yes", key=f"alert_co_yes_{rid}"):
+                            r_hist["check_out"] = now.strftime("%H:%M")
+                            today_history[rid] = r_hist
+                            user_data["history"][today_str] = today_history
+                            save_routines_data(data); st.rerun()
+                        if c2.button("❌ No", key=f"alert_co_no_{rid}"):
+                            r_hist["co_declined"] = True
+                            today_history[rid] = r_hist
+                            user_data["history"][today_str] = today_history
+                            save_routines_data(data); st.rerun()
+                        if c3.button(f"💤 Snooze ({3 - co_snoozes})", key=f"alert_co_snz_{rid}"):
+                            r_hist["co_snoozes"] = co_snoozes + 1
+                            r_hist["co_last_snooze"] = now.strftime("%H:%M")
+                            today_history[rid] = r_hist
+                            user_data["history"][today_str] = today_history
+                            save_routines_data(data); st.rerun()
+                    break
+                    
+    if alert_triggered:
+        audio_html = f'<audio autoplay="true" src="{BEEP_SOUND_BASE64}"></audio>'
+        st.markdown(audio_html, unsafe_allow_html=True)
+
+def render_routines(current_user):
+    """Renders the Daily Routines and Punctuality tracker."""
+    if current_user == "guest":
+        st.info("Please log in to manage your daily routines and punctuality.")
+        return
+
+    st.header("⏱️ Daily Routines & Time Tracking")
+    st.markdown("Track your daily habits like morning walks, job hours, and personal time. Be punctual to earn a high productivity score!")
+    
+    data = load_routines_data()
+    if current_user not in data:
+        data[current_user] = {"settings": [], "history": {}}
+        
+    user_data = data[current_user]
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if today_str not in user_data["history"]:
+        user_data["history"][today_str] = {}
+    today_history = user_data["history"][today_str]
+    
+    # 1. Manage Routines Expander
+    with st.expander("⚙️ Manage Routine Timings", expanded=(len(user_data["settings"]) == 0)):
+        with st.form("add_routine_form"):
+            r_name = st.text_input("Routine Name (e.g., Morning Walk, Job Duration, Evening Walk)")
+            c1, c2 = st.columns(2)
+            r_start = c1.time_input("Expected Start Time (Check-In)")
+            r_end = c2.time_input("Expected End Time (Check-Out)")
+            
+            days_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            active_days = st.multiselect("Active Days", options=days_options, default=days_options)
+            
+            if st.form_submit_button("➕ Add Routine"):
+                if r_name.strip():
+                    if not active_days:
+                        st.error("Please select at least one active day.")
+                    else:
+                        user_data["settings"].append({
+                            "id": str(uuid.uuid4())[:8], 
+                            "name": r_name.strip(), 
+                            "start": r_start.strftime("%H:%M"), 
+                            "end": r_end.strftime("%H:%M"),
+                            "days": active_days
+                        })
+                        data[current_user] = user_data
+                        save_routines_data(data)
+                        st.success(f"Added routine: {r_name}")
+                        st.rerun()
+                else:
+                    st.error("Please enter a routine name.")
+                    
+        if user_data["settings"]:
+            st.markdown("**Your Defined Routines:**")
+            for i, r in enumerate(user_data["settings"]):
+                col_del1, col_del2 = st.columns([0.9, 0.1])
+                
+                days_list = r.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+                if len(days_list) == 7:
+                    days_str = "Everyday"
+                elif len(days_list) == 5 and set(days_list) == {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"}:
+                    days_str = "Weekdays"
+                elif len(days_list) == 2 and set(days_list) == {"Saturday", "Sunday"}:
+                    days_str = "Weekends"
+                else:
+                    days_str = ", ".join([d[:3] for d in days_list])
+                    
+                col_del1.write(f"- **{r['name']}**: {r['start']} to {r['end']} ({days_str})")
+                if col_del2.button("🗑️", key=f"del_r_{r['id']}", help="Delete Routine"):
+                    user_data["settings"].pop(i)
+                    data[current_user] = user_data
+                    save_routines_data(data)
+                    st.rerun()
+
+    # 2. Today's Check-ins
+    if user_data["settings"]:
+        st.subheader("📅 Today's Schedule & Punctuality")
+        
+        current_day_name = datetime.now().strftime("%A")
+        todays_routines = [
+            r for r in user_data["settings"] 
+            if current_day_name in r.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+        ]
+        
+        if todays_routines:
+            punctuality_score = 0
+            completed_routines = 0
+            
+            for r in todays_routines:
+                rid = r["id"]
+                r_hist = today_history.get(rid, {})
+                
+                with st.container(border=True):
+                    col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1.5])
+                    
+                    col1.markdown(f"**{r['name']}**  \n`{r['start']} - {r['end']}`")
+                    
+                    # Check-in Logic
+                    if not r_hist.get("check_in"):
+                        if r_hist.get("ci_declined") or r_hist.get("ci_snoozes", 0) >= 3:
+                            col2.warning("Skipped")
+                            if col2.button("Check-In Anyway", key=f"ci_anyway_{rid}", use_container_width=True):
+                                r_hist["check_in"] = datetime.now().strftime("%H:%M")
+                                today_history[rid] = r_hist
+                                user_data["history"][today_str] = today_history
+                                data[current_user] = user_data
+                                save_routines_data(data)
+                                st.rerun()
+                        else:
+                            if col2.button("🟢 Check-In", key=f"ci_{rid}", use_container_width=True):
+                                r_hist["check_in"] = datetime.now().strftime("%H:%M")
+                                today_history[rid] = r_hist
+                                user_data["history"][today_str] = today_history
+                                data[current_user] = user_data
+                                save_routines_data(data)
+                                st.rerun()
+                    else:
+                        col2.success(f"In: {r_hist['check_in']}")
+                    
+                    # Check-out Logic
+                    if r_hist.get("check_in") and not r_hist.get("check_out"):
+                        if r_hist.get("co_declined") or r_hist.get("co_snoozes", 0) >= 3:
+                            col3.warning("Skipped")
+                            if col3.button("Check-Out Anyway", key=f"co_anyway_{rid}", use_container_width=True):
+                                r_hist["check_out"] = datetime.now().strftime("%H:%M")
+                                today_history[rid] = r_hist
+                                user_data["history"][today_str] = today_history
+                                data[current_user] = user_data
+                                save_routines_data(data)
+                                st.rerun()
+                        else:
+                            if col3.button("🔴 Check-Out", key=f"co_{rid}", use_container_width=True):
+                                r_hist["check_out"] = datetime.now().strftime("%H:%M")
+                                today_history[rid] = r_hist
+                                user_data["history"][today_str] = today_history
+                                data[current_user] = user_data
+                                save_routines_data(data)
+                                st.rerun()
+                    elif r_hist.get("check_out"):
+                        col3.info(f"Out: {r_hist['check_out']}")
+                        completed_routines += 1
+                    
+                    # Punctuality calculation & motivation
+                    if r_hist.get("check_in"):
+                        expected_start = datetime.strptime(r['start'], "%H:%M")
+                        actual_start = datetime.strptime(r_hist['check_in'], "%H:%M")
+                        diff_mins = (actual_start - expected_start).total_seconds() / 60
+                        
+                        if diff_mins <= 5: # 5 mins grace period (early is also perfect)
+                            col4.success("🌟 Perfect Punctuality!")
+                            punctuality_score += 100
+                        elif diff_mins <= 15:
+                            col4.warning("👍 Good, but a bit late.")
+                            punctuality_score += 50
+                        else:
+                            col4.error(f"⏰ {int(diff_mins)} mins late.")
+                            punctuality_score += 10
+            
+            # Global motivation based on completed routines
+            st.divider()
+            if completed_routines > 0:
+                avg_punctuality = punctuality_score / len(todays_routines)
+                st.progress(min(avg_punctuality / 100, 1.0), text=f"Overall Punctuality Score: {avg_punctuality:.0f}%")
+                
+                if completed_routines == len(todays_routines):
+                    if avg_punctuality >= 90:
+                        st.success("🏆 **Master of Routines!** You conquered the day with flawless punctuality. Productivity at its peak!")
+                        st.balloons()
+                    elif avg_punctuality >= 60:
+                        st.info("✅ **All routines completed!** Focus on hitting those start times perfectly tomorrow for Maximum Productivity.")
+                    else:
+                        st.warning("✅ **All routines completed**, but try to be more mindful of your timings tomorrow. Consistency is key!")
+                else:
+                    st.info(f"Keep going! You have {len(todays_routines) - completed_routines} routines left today.")
+        else:
+            st.info("🏖️ You don't have any routines scheduled for today. Enjoy your day off!")
+
 def render_dashboard(current_user):
     """Renders the main dashboard, including metrics, table, and editor."""
+    
+    SCHOOL_QUOTES = [
+        "“The roots of education are bitter, but the fruit is sweet.” – Aristotle",
+        "“Success is the sum of small efforts, repeated day in and day out.” – Robert Collier",
+        "“You don’t have to be great to start, but you have to start to be great.” – Zig Ziglar",
+        "“Discipline is the bridge between goals and accomplishment.” – Jim Rohn",
+        "“The secret of your future is hidden in your daily routine.” – Mike Murdock",
+        "“Do not wait; the time will never be 'just right.' Start where you stand.” – George Herbert",
+        "“We are what we repeatedly do. Excellence, then, is not an act, but a habit.” – Will Durant"
+    ]
+    # Pick a rotating quote based on the day of the year
+    daily_quote = SCHOOL_QUOTES[datetime.now().timetuple().tm_yday % len(SCHOOL_QUOTES)]
+    st.info(f"🎓 **Daily Motivation:** {daily_quote}")
+    
     required_cols_for_metrics = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
     df = pd.DataFrame(columns=required_cols_for_metrics)
     
@@ -354,17 +682,20 @@ def render_dashboard(current_user):
 
     # 2. Status Overview (Styled Table)
     display_df = df.copy()
-    show_mobiles = False
     if not df.empty:
-        show_mobiles = st.toggle("👁️ Show full mobile numbers in tables", value=False, disabled=(current_user == "guest"))
+        overview_state = st.session_state.get("overview_table", {})
+        overview_edits = overview_state.get("edited_rows", {})
         
-        if not show_mobiles:
-            # Mask sensitive info in the overview table
-            display_df["Owner"] = display_df["Owner"].apply(mask_mobile)
-            if "SharedWith" in display_df.columns:
-                display_df["SharedWith"] = display_df["SharedWith"].apply(
-                    lambda x: ", ".join([mask_mobile(s.strip()) for s in str(x).split(",") if s.strip()]) if x else ""
-                )
+        display_df.insert(0, "👁️", False)
+        for idx, row in display_df.iterrows():
+            # Check session state to see if this specific row was toggled to reveal
+            row_edits = overview_edits.get(idx, overview_edits.get(str(idx), {}))
+            is_revealed = row_edits.get("👁️", False)
+            
+            if not is_revealed:
+                display_df.at[idx, "Owner"] = mask_mobile(row.get("Owner", ""))
+                if pd.notna(row.get("SharedWith")) and row.get("SharedWith"):
+                    display_df.at[idx, "SharedWith"] = ", ".join([mask_mobile(s.strip()) for s in str(row["SharedWith"]).split(",") if s.strip()])
 
         search_query = st.text_input("🔍 Search tasks (name, status, or priority):", "").lower()
         if search_query:
@@ -374,10 +705,13 @@ def render_dashboard(current_user):
             if current_user == "guest":
                 st.info("Please log in to view your live status overview.")
             else:
-                st.dataframe(
+                st.data_editor(
                     display_df.style.apply(style_status, axis=1),
                     width='stretch',
-                    hide_index=True
+                    hide_index=True,
+                    disabled=[col for col in display_df.columns if col != "👁️"],
+                    column_config={"👁️": st.column_config.CheckboxColumn("👁️", default=False, width="small", help="Reveal mobile numbers")},
+                    key="overview_table"
                 )
         
         # Replace Task Distribution with Motivational Gamification System
@@ -413,7 +747,10 @@ def render_dashboard(current_user):
                     st.balloons()
                     st.success("🎉 Board Cleared! You're working at light speed today. Time to celebrate!")
 
-    col1, col2 = st.columns([1, 2])
+    check_routine_alerts(current_user)
+
+    tab_tasks, tab_routines = st.tabs(["📋 Tasks & AI Agent", "⏱️ Daily Routines & Punctuality"])
+    col1, col2 = tab_tasks.columns([1, 2])
 
     with col1:
         st.subheader("📝 Task Editor")
@@ -432,17 +769,26 @@ def render_dashboard(current_user):
         # Add a temporary 'Delete' column for the editor
         df_editor = df.copy()
         df_editor.insert(0, "🗑️", False)
+        df_editor.insert(1, "👁️", False)
         
         # Mask sensitive info in the editor while storing original values to restore on save
         original_metadata = df[['Owner', 'SharedWith']].to_dict('index')
-        if not show_mobiles:
-            df_editor["Owner"] = df_editor["Owner"].apply(mask_mobile)
-            df_editor["SharedWith"] = df_editor["SharedWith"].apply(
-                lambda x: ", ".join([mask_mobile(s.strip()) for s in str(x).split(",") if s.strip()]) if x else ""
-            )
+        
+        editor_state = st.session_state.get("todo_editor", {})
+        edited_rows = editor_state.get("edited_rows", {})
+        
+        for idx, row in df_editor.iterrows():
+            row_edits = edited_rows.get(idx, edited_rows.get(str(idx), {}))
+            is_revealed = row_edits.get("👁️", False)
+            
+            if not is_revealed:
+                df_editor.at[idx, "Owner"] = mask_mobile(row.get("Owner", ""))
+                if pd.notna(row.get("SharedWith")) and row.get("SharedWith"):
+                    df_editor.at[idx, "SharedWith"] = ", ".join([mask_mobile(s.strip()) for s in str(row["SharedWith"]).split(",") if s.strip()])
 
         # Normalize column dtypes to satisfy Streamlit's data_editor type checks
         df_editor["🗑️"] = df_editor["🗑️"].astype(bool)
+        df_editor["👁️"] = df_editor["👁️"].astype(bool)
         df_editor["Status"] = df_editor["Status"].fillna("Pending").astype(str)
         df_editor["Priority"] = df_editor["Priority"].fillna("High").astype(str)
         if "Date" in df_editor.columns:
@@ -459,6 +805,7 @@ def render_dashboard(current_user):
             disabled=(current_user == "guest"),
             column_config={
                 "🗑️": st.column_config.CheckboxColumn("Delete?", default=False, width="small"),
+                "👁️": st.column_config.CheckboxColumn("👁️", default=False, width="small", help="Reveal mobile numbers"),
                 "Status": st.column_config.SelectboxColumn(
                     "Status",
                     options=["Pending", "Working", "Done"],
@@ -484,7 +831,7 @@ def render_dashboard(current_user):
         btn_col1, btn_col2 = st.columns(2)
         if btn_col1.button("💾 Save Changes", use_container_width=True, disabled=(current_user == "guest")):
             # 1. Filter out rows marked for deletion
-            save_df = edited_df[edited_df["🗑️"] == False].drop(columns=["🗑️"])
+            save_df = edited_df[edited_df["🗑️"] == False].drop(columns=["🗑️", "👁️"], errors='ignore')
             
             # 2. Restore real Mobile Numbers from masked versions before saving
             for idx, row in save_df.iterrows():
@@ -746,6 +1093,9 @@ def render_dashboard(current_user):
         if st.session_state.get("last_agent_log"):
             with st.expander("🔍 View Agent Thinking Process", expanded=False):
                 st.code(st.session_state.last_agent_log)
+                
+    with tab_routines:
+        render_routines(current_user)
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,36 @@
+{
+  "7985728148": {
+    "settings": [
+      {
+        "id": "1deb74ec",
+        "name": "Walking and Exercising",
+        "start": "05:00",
+        "end": "07:30"
+      },
+      {
+        "id": "b362bada",
+        "name": "Learning & Working",
+        "start": "09:00",
+        "end": "19:30"
+      },
+      {
+        "id": "420ea8b5",
+        "name": "Emergency & Personal Work",
+        "start": "19:30",
+        "end": "22:00",
+        "days": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+          "Sunday"
+        ]
+      }
+    ],
+    "history": {
+      "2026-06-03": {}
+    }
+  }
+}

@@ -4,6 +4,7 @@ import os
 import pandas as pd # Required for delete_task
 import csv
 import threading
+import json
 
 # Constants for file paths (could be moved to .env)
 TODO_FILE = os.getenv("TODO_FILE_PATH", "todo.txt")
@@ -57,6 +58,31 @@ def read_todo_list() -> str:
         return visible_df.to_csv(index=False) if not visible_df.empty else "No tasks found for you."
     except Exception as e:
         return f"Error reading tasks: {str(e)}"
+
+def read_routines() -> str:
+    """
+    Reads the current user's daily routines and schedule.
+    Use this to understand their daily schedule, punctuality, and suggest productivity strategies.
+    """
+    try:
+        routines_file = "routines.json"
+        if not os.path.exists(routines_file):
+            return "No routines configured."
+        with open(routines_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        user = get_current_user()
+        if user not in data or not data[user].get("settings"):
+            return "No routines configured for this user."
+            
+        settings = data[user]["settings"]
+        out = "User's Daily Routines:\n"
+        for r in settings:
+            days = ", ".join(r.get("days", ["Everyday"]))
+            out += f"- {r['name']}: {r['start']} to {r['end']} ({days})\n"
+        return out
+    except Exception as e:
+        return f"Error reading routines: {str(e)}"
 
 def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_mobiles: str = "", owner: str = None) -> str:
     """
