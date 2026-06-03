@@ -32,10 +32,14 @@ def read_todo_list() -> str:
         if not os.path.exists(TODO_FILE):
             return f"Error: Task file '{TODO_FILE}' not found. Please create it first."
         
-        df = pd.read_csv(TODO_FILE)
+        df = pd.read_csv(TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
         # Ensure 'SharedWith' column exists for filtering
         if 'SharedWith' not in df.columns:
             df['SharedWith'] = ""
+        if 'Owner' not in df.columns:
+            df['Owner'] = ""
+            
+        df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
         if df.empty:
             return "The task list is currently empty."
             
@@ -102,10 +106,12 @@ def delete_task(task_identifier: str, owner: str = None) -> str:
         if not os.path.exists(TODO_FILE):
             return f"Error: Task file '{TODO_FILE}' not found."
         
-        df = pd.read_csv(TODO_FILE)
+        df = pd.read_csv(TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
         initial_rows = len(df)
         user = owner if owner else get_current_user()
         
+        if 'Owner' not in df.columns: df['Owner'] = ""
+        df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
         # Match task keyword AND check ownership
         mask = (df['Task'].str.contains(task_identifier, case=False, na=False)) & (df['Owner'] == user)
         
@@ -141,11 +147,13 @@ def update_task(task_identifier: str, updates: dict, owner: str = None) -> str:
         if not os.path.exists(TODO_FILE):
             return f"Error: Task file '{TODO_FILE}' not found."
         
-        df = pd.read_csv(TODO_FILE)
+        df = pd.read_csv(TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
         user = owner if owner else get_current_user()
         
         if 'SharedWith' not in df.columns:
             df['SharedWith'] = ""
+        if 'Owner' not in df.columns: df['Owner'] = ""
+        df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
 
         mask = (df['Task'].str.contains(task_identifier, case=False, na=False)) & \
                ((df['Owner'] == user) | (df['SharedWith'].apply(lambda x: user in str(x).split(',') if pd.notna(x) else False)))
@@ -185,12 +193,14 @@ def update_task_status(task_identifier: str, new_status: str, owner: str = None)
         if not os.path.exists(TODO_FILE):
             return f"Error: Task file '{TODO_FILE}' not found."
         
-        df = pd.read_csv(TODO_FILE)
+        df = pd.read_csv(TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
         user = owner if owner else get_current_user()
         
         # Ensure 'SharedWith' column exists for filtering
         if 'SharedWith' not in df.columns:
             df['SharedWith'] = ""
+        if 'Owner' not in df.columns: df['Owner'] = ""
+        df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
 
         # Match task keyword AND (check ownership OR if task is shared with the current user)
         mask = (df['Task'].str.contains(task_identifier, case=False, na=False)) & \

@@ -197,33 +197,33 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
 
     # Wrap tool functions so they always run with an explicit owner (user_id).
     # This avoids losing thread-local context when the model runtime invokes functions.
-    def read_todo_list_owner(*args, **kwargs):
+    def read_todo_list(*args, **kwargs):
         return tools.read_todo_list()
 
-    def add_task_owner(task: str = "test task", priority: str = "High", date: str = None, shared_with_mobiles: str = "", **kwargs):
+    def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_mobiles: str = "", **kwargs):
         return tools.add_task(task=task, priority=priority, date=date, shared_with_mobiles=shared_with_mobiles, owner=user_id)
 
-    def delete_task_owner(task_identifier: str, **kwargs):
+    def delete_task(task_identifier: str, **kwargs):
         return tools.delete_task(task_identifier, owner=user_id)
 
-    def update_task_owner(task_identifier: str, updates: dict, **kwargs):
+    def update_task(task_identifier: str, updates: dict, **kwargs):
         return tools.update_task(task_identifier, updates, owner=user_id)
 
-    def update_task_status_owner(task_identifier: str, new_status: str, **kwargs):
+    def update_task_status(task_identifier: str, new_status: str, **kwargs):
         return tools.update_task_status(task_identifier, new_status, owner=user_id)
 
-    def log_report_owner(report_content: str, **kwargs):
+    def log_report(report_content: str, **kwargs):
         return tools.log_report(report_content)
 
     config = genai.types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION,
         tools=[
-            read_todo_list_owner,
-            add_task_owner,
-            update_task_owner,
-            delete_task_owner,
-            update_task_status_owner,
-            log_report_owner,
+            read_todo_list,
+            add_task,
+            update_task,
+            delete_task,
+            update_task_status,
+            log_report,
         ],
         tool_config=genai.types.ToolConfig(
             function_calling_config=genai.types.FunctionCallingConfig(

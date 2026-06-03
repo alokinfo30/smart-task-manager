@@ -40,7 +40,7 @@ def parse_task_name_from_prompt(prompt: str) -> str | None:
         "Break down a complex task",
         "Create a daily technical summary"
     ]
-    if prompt_clean in quick_prompts:
+    if prompt_clean.lower() in [q.lower() for q in quick_prompts]:
         return None
 
     # Look for clear add task instructions like "add task demo", "create task demo", "add task called demo"
@@ -102,7 +102,7 @@ def load_todo_df(current_user):
 
     try:
         if os.path.exists(tools.TODO_FILE):
-            df = pd.read_csv(tools.TODO_FILE)
+            df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
         else:
             df = pd.DataFrame(columns=required_cols)
     except Exception:
@@ -128,8 +128,9 @@ def load_todo_df(current_user):
             else:
                 df[col] = None
 
-    # Normalize SharedWith to string to avoid float inference
-    df['SharedWith'] = df['SharedWith'].fillna('').astype(str).replace('nan', '')
+    # Normalize Owner and SharedWith to string to avoid float inference
+    df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+    df['SharedWith'] = df['SharedWith'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
 
     # Convert CompletedAt to datetime safely
     try:
@@ -423,7 +424,9 @@ def render_dashboard(current_user):
         # Add a button to explicitly add a new task
         if st.button("➕ Add New Task", use_container_width=True, disabled=(current_user == "guest")):
             # Use the centralized tool function to handle locking and formatting correctly
-            tools.add_task(task="New task...", priority="High", owner=current_user)
+            status_msg = tools.add_task(task="New task...", priority="High", owner=current_user)
+            if "Success" not in status_msg:
+                st.toast(status_msg, icon="❌")
             st.rerun()
 
         # Add a temporary 'Delete' column for the editor
@@ -515,7 +518,7 @@ def render_dashboard(current_user):
             
             # Reload full file to ensure we don't overwrite other users' data
             if os.path.exists(tools.TODO_FILE):
-                full_df = pd.read_csv(tools.TODO_FILE)
+                full_df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
                 # Ensure required columns exist to avoid KeyError during filtering or processing
                 for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
                     if col not in full_df.columns:
@@ -524,7 +527,8 @@ def render_dashboard(current_user):
                         elif col == "SharedWith": full_df[col] = ""
                         else: full_df[col] = None
                 # Cast to string to prevent type mismatch during concat or editing
-                full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).replace('nan', '')
+                full_df['Owner'] = full_df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+                full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
             else:
                 full_df = pd.DataFrame(columns=save_df.columns)
             
@@ -544,7 +548,7 @@ def render_dashboard(current_user):
             
         if btn_col2.button("🗑️ Clear Done", use_container_width=True, disabled=(current_user == "guest")):
             if os.path.exists(tools.TODO_FILE):
-                full_df = pd.read_csv(tools.TODO_FILE)
+                full_df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
                 # Ensure required columns exist to avoid KeyError: 'Owner'
                 for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
                     if col not in full_df.columns:
@@ -552,6 +556,10 @@ def render_dashboard(current_user):
                         elif col == "Owner": full_df[col] = "guest"
                         elif col == "SharedWith": full_df[col] = ""
                         else: full_df[col] = None
+                        
+                # Cast to string to prevent type mismatch
+                full_df['Owner'] = full_df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+                full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
 
                 # Keep tasks not owned by user OR tasks owned by user that are NOT Done
                 mask = (full_df['Owner'] != current_user) | (full_df['Status'] != 'Done')
@@ -642,8 +650,11 @@ def render_dashboard(current_user):
                 # Detect explicit task-creation commands and persist directly.
                 task_name = parse_task_name_from_prompt(final_prompt)
                 if task_name:
-                    tools.add_task(task=task_name, priority="High", owner=current_user)
-                    assistant_text = f"✅ Added task '{task_name}' with High priority for today."
+                    status_msg = tools.add_task(task=task_name, priority="High", owner=current_user)
+                    if "Success" in status_msg:
+                        assistant_text = f"✅ Added task '{task_name}' with High priority for today."
+                    else:
+                        assistant_text = f"❌ Failed to add task: {status_msg}"
                     st.session_state.chat_display.append({
                         "role": "assistant",
                         "content": assistant_text,
