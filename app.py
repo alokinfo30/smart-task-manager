@@ -13,8 +13,15 @@ if sys.platform == 'win32':
     proactor_events._ProactorBasePipeTransport._call_connection_lost = _patched_call_connection_lost
 
 import streamlit as st
+import asyncio
+try:
+    import websockets
+    WS_AVAILABLE = True
+except ImportError:
+    WS_AVAILABLE = False
 import os
 import re
+import threading
 from dotenv import load_dotenv
 import time
 import pandas as pd
@@ -23,11 +30,149 @@ from datetime import datetime, timedelta
 import base64
 import json
 import uuid
+import smtplib
+from email.message import EmailMessage
+import requests
+import urllib.parse
+from auth0_server_python.auth_server.server_client import ServerClient
+from auth0_server_python.auth_types import LogoutOptions, StartInteractiveLoginOptions, StateData, TransactionData
+from auth0_server_python.store.abstract import AbstractDataStore
 from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state
 import tools # Import the whole module to access context
 from auth import SessionManager, PasswordHandler, AuthenticationError, SECURITY_QUESTIONS
 
 load_dotenv()
+
+# --- Auth0 SDK Streamlit Store Implementation ---
+class FileDataStore(AbstractDataStore):
+    def __init__(self, secret, model, file_name):
+        super().__init__({"secret": secret})
+        self.model = model
+        self.file_name = file_name
+
+    def _load(self):
+        if os.path.exists(self.file_name):
+            try:
+                with open(self.file_name, "r") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def _save(self, data):
+        with open(self.file_name, "w") as f:
+            json.dump(data, f)
+
+    async def set(self, identifier, state, options=None, **_):
+        data = state.model_dump() if hasattr(state, "model_dump") else state
+        store = self._load()
+        store[identifier] = self.encrypt(identifier, data)
+        self._save(store)
+
+    async def get(self, identifier, options=None):
+        store = self._load()
+        encrypted = store.get(identifier)
+        if encrypted:
+            return self.model.model_validate(self.decrypt(identifier, encrypted))
+        return None
+
+    async def delete(self, identifier, options=None, **_):
+        store = self._load()
+        if identifier in store:
+            del store[identifier]
+            self._save(store)
+
+def get_auth0_client():
+    session_secret = os.getenv("AUTH0_SECRET", "0000000000000000000000000000000000000000000000000000000000000000")
+    return ServerClient(
+        domain=os.getenv("AUTH0_DOMAIN", ""),
+        client_id=os.getenv("AUTH0_CLIENT_ID", ""),
+        client_secret=os.getenv("AUTH0_CLIENT_SECRET", ""),
+        redirect_uri=os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/callback",
+        authorization_params={"scope": "openid profile email"},
+        secret=session_secret,
+        state_store=FileDataStore(session_secret, StateData, "auth0_sessions.json"),
+        transaction_store=FileDataStore(session_secret, TransactionData, "auth0_transactions.json"),
+    )
+
+# --- WebSocket Server for Real-Time Multiplayer Sync ---
+WS_PORT = 8765
+connected_clients = set()
+ws_loop = None
+
+async def ws_handler(websocket, *args, **kwargs):
+    """Manage active WebSocket connections from the frontend."""
+    connected_clients.add(websocket)
+    try:
+        async for message in websocket:
+            pass
+    except Exception:
+        pass
+    finally:
+        connected_clients.remove(websocket)
+
+async def ws_main():
+    """Async context for running the WebSocket server."""
+    try:
+        async with websockets.serve(ws_handler, "localhost", WS_PORT):
+            await asyncio.Future()  # Run forever
+    except OSError:
+        # Port already in use (likely due to Streamlit's auto-reloader)
+        pass
+
+def run_ws_server():
+    global ws_loop
+    ws_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(ws_loop)
+    try:
+        server = websockets.serve(ws_handler, "localhost", WS_PORT)
+        ws_loop.run_until_complete(server)
+        ws_loop.run_forever()
+    except OSError:
+        # Port already in use (likely due to Streamlit's auto-reloader)
+        ws_loop.run_until_complete(ws_main())
+    except Exception:
+        pass
+
+if WS_AVAILABLE:
+    @st.cache_resource
+    def start_websocket_server():
+        """Start the WebSocket broadcaster in a background daemon thread."""
+        t = threading.Thread(target=run_ws_server, daemon=True)
+        t.start()
+        return True
+    start_websocket_server()
+
+def broadcast_update():
+    """Broadcast an update event to all active connected browser clients."""
+    global ws_loop
+    if WS_AVAILABLE and ws_loop and connected_clients:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                asyncio.gather(*(ws.send("update") for ws in connected_clients)),
+                ws_loop
+            )
+        except Exception:
+            pass
+
+def render_websocket_client():
+    """Inject JS to listen for remote updates and trigger browser notifications."""
+    if not WS_AVAILABLE:
+        return
+    js = f"""
+    <script>
+        if (!window.wsSyncConnected) {{
+            const ws = new WebSocket('ws://localhost:{WS_PORT}');
+            ws.onmessage = function(event) {{
+                if (event.data === 'update' && Notification.permission === 'granted') {{
+                    new Notification('Smart Task Agent', {{ body: 'Task board updated remotely by another device or AI.' }});
+                }}
+            }};
+            window.wsSyncConnected = true;
+        }}
+    </script>
+    """
+    st.html(js)
 
 def parse_task_name_from_prompt(prompt: str) -> str | None:
     """Extract a direct task name from an explicit add-task request."""
@@ -70,12 +215,20 @@ def parse_task_name_from_prompt(prompt: str) -> str | None:
 
 
 def mask_mobile(mobile):
-    """Helper to mask mobile numbers for privacy."""
+    """Helper to mask mobile numbers or emails for privacy."""
     val = str(mobile).strip()
     if not val or val.lower() == "nan" or val.lower() == "guest":
         return "guest" if val.lower() == "guest" else ""
     if val.lower() == "demo_user":
         return "Demo User"
+        
+    # Handle email masking if logged in via SSO
+    if "@" in val:
+        parts = val.split("@")
+        if len(parts[0]) > 2:
+            return f"{parts[0][:2]}***@{parts[1]}"
+        return f"*@{parts[1]}"
+        
     if len(val) <= 4:
         return "****"
     return f"{val[:2]}******{val[-2:]}"
@@ -85,7 +238,34 @@ def init_session_state():
     if "checkbox_suffix" not in st.session_state:
         st.session_state.checkbox_suffix = 0
     if "current_user" not in st.session_state:
-        # Check for persistent session in query parameters to handle page refreshes
+        # 1. Check for Auth0 authorization code callback
+        if "code" in st.query_params and "state" in st.query_params:
+            auth0 = get_auth0_client()
+            app_base = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
+            q_params = urllib.parse.urlencode(st.query_params)
+            req_url = f"{app_base}/callback?{q_params}"
+            
+            if os.getenv("AUTH0_DOMAIN"):
+                try:
+                    async def process_auth0_login():
+                        await auth0.complete_interactive_login(
+                            url=req_url, 
+                            store_options={"query_params": st.query_params}
+                        )
+                        return await auth0.get_user(store_options={})
+                        
+                    user_info = asyncio.run(process_auth0_login())
+                    if user_info:
+                        user_id = user_info.get("email") or user_info.get("nickname") or user_info.get("sub")
+                        if user_id:
+                            st.session_state.current_user = user_id
+                            st.session_state.auth_method = "Auth0 SSO"
+                            st.query_params.clear() # type: ignore
+                            return
+                except Exception as e:
+                    print(f"Auth0 SSO Error: {e}")
+
+        # 2. Check for persistent session in query parameters to handle page refreshes
         if "u" in st.query_params:
             token_param = st.query_params.get("u")
             token = token_param[0] if isinstance(token_param, list) and token_param else token_param
@@ -188,12 +368,35 @@ def load_todo_df(current_user):
 
 def render_auth_ui():
     """Render the secure authentication UI with encrypted PIN."""
-    st.sidebar.title("🔐 Secure Authentication")
+    st.sidebar.title("🔐 Sign In / Register")
     
     init_session_state()
     
     if st.session_state.current_user == "guest":
-        st.sidebar.subheader("PIN Authentication")
+        st.sidebar.subheader("🚀 Quick Test")
+        st.sidebar.info("Want to test features without registering?")
+        if st.sidebar.button("Login as Demo User", use_container_width=True):
+            st.session_state.current_user = "demo_user"
+            st.session_state.auth_method = "Demo"
+            st.rerun()
+            
+        st.sidebar.divider()
+        st.sidebar.subheader("🌐 Login with Email / Social")
+        
+        if os.getenv("AUTH0_DOMAIN") and os.getenv("AUTH0_CLIENT_ID"):
+            auth0 = get_auth0_client()
+            auth_url = asyncio.run(auth0.start_interactive_login(
+                options=StartInteractiveLoginOptions(),
+                store_options={}
+            ))
+            st.sidebar.markdown(f'<a href="{auth_url}" target="_self"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">Continue with Email / Social</button></a>', unsafe_allow_html=True)
+            st.sidebar.caption("Secure Login")
+        else:
+            st.sidebar.info("Auth0 SSO is not configured. Set `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, and `AUTH0_SECRET` in `.env`.")
+            
+        st.sidebar.divider()
+
+        st.sidebar.subheader("📱 Mobile Number & PIN")
         mobile_input = st.sidebar.text_input("Mobile Number", placeholder="e.g. 9876543210", key="auth_mobile")
         pin_input = st.sidebar.text_input("6-Digit PIN", type="password", help="Enter your 6-digit PIN", key="auth_pin")
         remember_me = st.sidebar.checkbox("Remember Me", value=True, help="Keep me logged in even after page refresh")
@@ -254,14 +457,6 @@ def render_auth_ui():
                 if st.button("Cancel"):
                     st.session_state.forgot_pin_flow = False
                     st.rerun()
-
-        st.sidebar.divider()
-        st.sidebar.subheader("🚀 Quick Test")
-        st.sidebar.info("Want to test features without registering?")
-        if st.sidebar.button("Login as Demo User", use_container_width=True):
-            st.session_state.current_user = "demo_user"
-            st.session_state.auth_method = "Demo"
-            st.rerun()
             
         st.sidebar.divider()
         return "guest"
@@ -278,10 +473,23 @@ def render_auth_ui():
                 token = token_param[0] if isinstance(token_param, list) and token_param else token_param
                 SessionManager.clear_session(token)
                 
-            st.session_state.current_user = "guest"
-            st.session_state.auth_method = None
-            st.query_params.clear() # type: ignore
-            st.rerun()
+            if st.session_state.auth_method == "Auth0 SSO":
+                auth0 = get_auth0_client()
+                logout_url = asyncio.run(auth0.logout(
+                    options=LogoutOptions(return_to=os.getenv("APP_BASE_URL", "http://localhost:8501")),
+                    store_options={}
+                ))
+                st.session_state.current_user = "guest"
+                st.session_state.auth_method = None
+                st.query_params.clear() # type: ignore
+                safe_url = logout_url.replace('&', '&amp;')
+                st.markdown(f'<meta http-equiv="refresh" content="0; url={safe_url}">', unsafe_allow_html=True)
+                st.stop()
+            else:
+                st.session_state.current_user = "guest"
+                st.session_state.auth_method = None
+                st.query_params.clear() # type: ignore
+                st.rerun()
         
         return st.session_state.current_user
 
@@ -339,7 +547,29 @@ def load_routines_data():
     if os.path.exists(ROUTINES_FILE):
         try:
             with open(ROUTINES_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            
+            # Cleanup old routine history: past one month data deleted on 15th
+            now = datetime.now()
+            current_month_str = now.strftime("%Y-%m")
+            prev_month_str = f"{now.year - 1}-12" if now.month == 1 else f"{now.year}-{now.month - 1:02d}"
+            
+            changed = False
+            for user, user_data in data.items():
+                if isinstance(user_data, dict) and "history" in user_data:
+                    dates_to_delete = [
+                        date_str for date_str in user_data["history"]
+                        if not (date_str.startswith(current_month_str) or 
+                               (date_str.startswith(prev_month_str) and now.day < 15))
+                    ]
+                    for d in dates_to_delete:
+                        del user_data["history"][d]
+                        changed = True
+                        
+            if changed:
+                with open(ROUTINES_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            return data
         except Exception:
             pass
     return {}
@@ -348,6 +578,56 @@ def save_routines_data(data):
     """Persist user routines and check-in history to disk."""
     with open(ROUTINES_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+def send_routine_notifications(routine_name, time_str, action):
+    """Dispatch notifications via JS (Browser TTS/Desktop), Email, and Telegram."""
+    message = f"Routine Alert: It is time to {action} {routine_name} at {time_str}"
+    
+    # 1. Browser TTS and Desktop Notification
+    js_code = f"""
+    <script>
+        const message = "{message}";
+        if ('speechSynthesis' in window) {{
+            var msg = new SpeechSynthesisUtterance(message);
+            window.speechSynthesis.speak(msg);
+        }}
+        if (Notification.permission === 'granted') {{
+            new Notification('Smart Task Agent', {{ body: message }});
+        }} else if (Notification.permission !== 'denied') {{
+            Notification.requestPermission().then(function(permission) {{
+                if (permission === 'granted') {{
+                    new Notification('Smart Task Agent', {{ body: message }});
+                }}
+            }});
+        }}
+    </script>
+    """
+    st.html(js_code)
+
+    # 2. Gmail Notification
+    gmail_user = os.getenv("GMAIL_USER")
+    gmail_pass = os.getenv("GMAIL_APP_PASSWORD")
+    if gmail_user and gmail_pass:
+        try:
+            msg = EmailMessage()
+            msg.set_content(message)
+            msg['Subject'] = 'Smart Task Agent: Routine Reminder'
+            msg['To'] = gmail_user
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+                server.login(gmail_user, gmail_pass)
+                server.send_message(msg)
+        except Exception as e:
+            print(f"Failed to send email: {e}")
+
+    # 3. Telegram Notification
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if bot_token and chat_id:
+        try:
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            requests.post(url, json={'chat_id': chat_id, 'text': f"🔔 {message}"}, timeout=5)
+        except Exception as e:
+            print(f"Failed to send Telegram message: {e}")
 
 def check_routine_alerts(current_user):
     """Displays global alerts for check-ins/outs based on time."""
@@ -402,6 +682,15 @@ def check_routine_alerts(current_user):
                         
                 if alert_active and ci_snoozes < 3:
                     alert_triggered = True
+                    
+                    notify_key = f"ci_notified_{ci_snoozes}"
+                    if not r_hist.get(notify_key):
+                        send_routine_notifications(r['name'], r['start'], "start")
+                        r_hist[notify_key] = True
+                        today_history[rid] = r_hist
+                        user_data["history"][today_str] = today_history
+                        save_routines_data(data)
+                        
                     with st.container(border=True):
                         st.warning(f"🔔 **Routine Alert**: It is time to start **{r['name']}** ({r['start']}). Are you starting now?")
                         c1, c2, c3, _ = st.columns([2, 2, 2, 6])
@@ -440,6 +729,15 @@ def check_routine_alerts(current_user):
                         
                 if alert_active and co_snoozes < 3:
                     alert_triggered = True
+                    
+                    notify_key = f"co_notified_{co_snoozes}"
+                    if not r_hist.get(notify_key):
+                        send_routine_notifications(r['name'], r['end'], "end")
+                        r_hist[notify_key] = True
+                        today_history[rid] = r_hist
+                        user_data["history"][today_str] = today_history
+                        save_routines_data(data)
+                        
                     with st.container(border=True):
                         st.warning(f"🔔 **Routine Alert**: It is time to end **{r['name']}** ({r['end']}). Are you checking out?")
                         c1, c2, c3, _ = st.columns([2, 2, 2, 6])
@@ -642,6 +940,8 @@ def render_routines(current_user):
 def render_dashboard(current_user):
     """Renders the main dashboard, including metrics, table, and editor."""
     
+    render_websocket_client()
+
     SCHOOL_QUOTES = [
         "“The roots of education are bitter, but the fruit is sweet.” – Aristotle",
         "“Success is the sum of small efforts, repeated day in and day out.” – Robert Collier",
@@ -890,6 +1190,7 @@ def render_dashboard(current_user):
             
             final_df = pd.concat([others_tasks, save_df], ignore_index=True)
             final_df.to_csv(tools.TODO_FILE, index=False)
+            broadcast_update()
             st.success("Tasks saved and automatically sorted!")
             st.rerun() # Rerun to reflect changes in the UI and metrics
             
@@ -912,6 +1213,7 @@ def render_dashboard(current_user):
                 mask = (full_df['Owner'] != current_user) | (full_df['Status'] != 'Done')
                 final_df = full_df[mask]
                 final_df.to_csv(tools.TODO_FILE, index=False)
+                broadcast_update()
             
             st.toast("Completed tasks archived.")
             st.rerun()
@@ -955,6 +1257,7 @@ def render_dashboard(current_user):
                             prompt, st.session_state.agent_history, user_id=current_user
                         )
                         st.session_state.agent_history = updated_history
+                        broadcast_update()
                         st.session_state.chat_display.append({
                             "role": "assistant", 
                             "content": report_content,

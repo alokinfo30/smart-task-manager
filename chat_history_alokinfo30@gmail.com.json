@@ -1,0 +1,17 @@
+{
+  "agent_history": [],
+  "chat_display": [
+    {
+      "role": "user",
+      "content": "add task fav",
+      "timestamp": "2026-06-04T05:15:44.408541",
+      "archived": false
+    },
+    {
+      "role": "assistant",
+      "content": "✅ Added task 'fav' with High priority for today.",
+      "timestamp": "2026-06-04T05:15:44.409712",
+      "archived": false
+    }
+  ]
+}

@@ -30,7 +30,17 @@
       }
     ],
     "history": {
-      "2026-06-03": {}
+      "2026-06-03": {
+        "1deb74ec": {
+          "ci_notified_0": true,
+          "ci_snoozes": 1,
+          "ci_last_snooze": "23:35"
+        },
+        "b362bada": {
+          "ci_notified_0": true
+        }
+      },
+      "2026-06-04": {}
     }
   }
 }
