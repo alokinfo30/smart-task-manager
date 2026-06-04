@@ -3,5 +3,6 @@ pandas
 websockets
 python-dotenv
 google-genai
-auth0-server-python
+PyPDF2
+fpdf
 requests
