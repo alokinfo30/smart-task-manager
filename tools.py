@@ -8,6 +8,7 @@ import json
 
 # Constants for file paths (could be moved to .env)
 TODO_FILE = os.getenv("TODO_FILE_PATH", "todo.txt")
+EXPENSES_FILE = os.getenv("EXPENSES_FILE_PATH", "expenses.csv")
 
 # Thread-local storage to keep track of the current user session for the agent
 context = threading.local()
@@ -269,3 +270,46 @@ def log_report(report_content: str) -> str:
         return f"Success: Response has been archived in the secure storage for user {user}."
     except Exception as e:
         return f"Error archiving response: {str(e)}"
+
+def add_expense(amount: float, category: str, description: str, date: str = None, owner: str = None) -> str:
+    """
+    Adds a new daily expense to the tracker.
+    """
+    if not date:
+        date = datetime.datetime.now().strftime("%Y-%m-%d")
+    try:
+        fieldnames = ["Date", "Amount", "Category", "Description", "Owner"]
+        file_exists = os.path.exists(EXPENSES_FILE)
+        is_empty = not file_exists or os.path.getsize(EXPENSES_FILE) == 0
+        
+        with file_lock:
+            with open(EXPENSES_FILE, "a", encoding="utf-8", newline="") as file:
+                writer = csv.DictWriter(file, fieldnames=fieldnames)
+                if is_empty:
+                    writer.writeheader()
+                writer.writerow({
+                    "Date": date,
+                    "Amount": amount,
+                    "Category": category,
+                    "Description": description,
+                    "Owner": owner if owner else get_current_user()
+                })
+        return f"Success: Expense of {amount} added for '{category}'."
+    except Exception as e:
+        return f"Error adding expense: {str(e)}"
+
+def read_expenses() -> str:
+    """
+    Reads the current user's expenses to analyze spending habits, daily totals, and monthly budgets.
+    """
+    try:
+        if not os.path.exists(EXPENSES_FILE):
+            return "No expenses recorded yet."
+        
+        df = pd.read_csv(EXPENSES_FILE, dtype={'Owner': str})
+        if 'Owner' not in df.columns: df['Owner'] = ""
+        df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+        visible_df = df[df['Owner'] == get_current_user()]
+        return visible_df.to_csv(index=False) if not visible_df.empty else "No expenses found for you."
+    except Exception as e:
+        return f"Error reading expenses: {str(e)}"

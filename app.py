@@ -22,6 +22,7 @@ except ImportError:
 import os
 import re
 import threading
+import tempfile
 from dotenv import load_dotenv
 import time
 import pandas as pd
@@ -34,10 +35,17 @@ import smtplib
 from email.message import EmailMessage
 import requests
 import urllib.parse
+try:
+    from PyPDF2 import PdfReader
+    from fpdf import FPDF
+    PDF_TOOLS_AVAILABLE = True
+except ImportError:
+    PDF_TOOLS_AVAILABLE = False
+
 from auth0_server_python.auth_server.server_client import ServerClient
 from auth0_server_python.auth_types import LogoutOptions, StartInteractiveLoginOptions, StateData, TransactionData
 from auth0_server_python.store.abstract import AbstractDataStore
-from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state
+from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state, generate_learning_content, generate_tailored_resume
 import tools # Import the whole module to access context
 from auth import SessionManager, PasswordHandler, AuthenticationError, SECURITY_QUESTIONS
 from translations import get_text
@@ -214,6 +222,34 @@ def parse_task_name_from_prompt(prompt: str) -> str | None:
 
     return None
 
+def create_pdf(text: str):
+    """Creates a basic formatted PDF byte stream out of simple text using fpdf."""
+    if not PDF_TOOLS_AVAILABLE:
+        return None
+    try:
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_font("Arial", size=11)
+        
+        text = text.replace('•', '-') # Sanitize common unicode bullet
+        for line in text.split('\n'):
+            safe_line = line.encode('latin-1', 'replace').decode('latin-1')
+            if safe_line.isupper() and len(safe_line.strip()) > 3:
+                pdf.set_font("Arial", 'B', 12)
+                pdf.cell(0, 10, txt=safe_line, ln=True)
+                pdf.set_font("Arial", size=11)
+            else:
+                pdf.multi_cell(0, 6, txt=safe_line)
+                
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf.output(tmp.name)
+            with open(tmp.name, "rb") as f:
+                pdf_bytes = f.read()
+        os.remove(tmp.name)
+        return pdf_bytes
+    except Exception:
+        return None
 
 def mask_mobile(mobile):
     """Helper to mask mobile numbers or emails for privacy."""
@@ -389,6 +425,34 @@ def load_todo_df(current_user):
         except Exception:
             # If sorting fails due to mixed types, fallback to unsorted
             df = df.drop(columns=['p_val']).reset_index(drop=True)
+
+    return df
+
+def load_expenses_df(current_user):
+    """Loads the expenses list into a DataFrame."""
+    required_cols = ["Date", "Amount", "Category", "Description", "Owner"]
+
+    try:
+        if os.path.exists(tools.EXPENSES_FILE):
+            df = pd.read_csv(tools.EXPENSES_FILE, dtype={'Owner': str})
+        else:
+            df = pd.DataFrame(columns=required_cols)
+    except Exception:
+        df = pd.DataFrame(columns=required_cols)
+
+    for col in required_cols:
+        if col not in df.columns:
+            if col == 'Owner': df[col] = current_user
+            elif col == 'Amount': df[col] = 0.0
+            else: df[col] = ""
+
+    df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+    
+    if not df.empty:
+        df = df[df['Owner'] == current_user].copy()
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
+        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
+        df = df.sort_values(by="Date", ascending=False).reset_index(drop=True)
 
     return df
 
@@ -1080,7 +1144,13 @@ def render_dashboard(current_user):
 
     check_routine_alerts(current_user)
 
-    tab_tasks, tab_routines = st.tabs([get_text("📋 Tasks & AI Agent", st.session_state.language), get_text("⏱️ Daily Routines & Punctuality", st.session_state.language)])
+    tab_tasks, tab_routines, tab_learning, tab_resume, tab_expenses = st.tabs([
+        get_text("📋 Tasks & AI Agent", st.session_state.language), 
+        get_text("⏱️ Daily Routines & Punctuality", st.session_state.language),
+        get_text("📚 Learning Hub", st.session_state.language),
+        get_text("📄 Resume Builder", st.session_state.language),
+        get_text("💰 Expense Tracker", st.session_state.language)
+    ])
     col1, col2 = tab_tasks.columns([1, 2])
 
     with col1:
@@ -1430,6 +1500,136 @@ def render_dashboard(current_user):
                 
     with tab_routines:
         render_routines(current_user)
+        
+    with tab_learning:
+        st.header(get_text("📚 AI Learning & Practice", lang))
+        st.markdown(get_text("Enter a topic to learn, or paste a job description to get a tailored learning plan.", lang))
+
+        topic = st.text_area(get_text("Enter Topic or Job Description:", lang), height=150, placeholder=get_text("e.g., Python Decorators, or paste a full job description here...", lang))
+        if st.button(get_text("🚀 Generate Lesson", lang)):
+            if not topic.strip():
+                st.error(get_text("Please enter a topic or job description.", lang))
+            else:
+                with st.spinner(get_text("Generating lesson...", lang)):
+                    lesson_content = generate_learning_content(topic.strip(), lang)
+                    st.session_state[f"lesson_{current_user}"] = lesson_content
+        
+        lesson = st.session_state.get(f"lesson_{current_user}")
+        if lesson:
+            st.divider()
+            st.markdown(lesson)
+            
+    with tab_resume:
+        st.header(get_text("📄 Resume Builder", lang))
+        if not PDF_TOOLS_AVAILABLE:
+            st.warning("⚠️ Please install 'PyPDF2' and 'fpdf' (e.g., `pip install PyPDF2 fpdf`) to fully enable PDF uploads and formatting.")
+
+        rc1, rc2 = st.columns([1, 1.2])
+        with rc1:
+            uploaded_resume = st.file_uploader(get_text("Upload Existing Resume (PDF/TXT)", lang), type=["pdf", "txt"])
+            st.divider()
+            st.markdown(f"**{get_text('Or Fill Details Manually', lang)}**")
+            r_name = st.text_input(get_text("Full Name", lang))
+            r_mobile = st.text_input(get_text("Mobile Number", lang), key="resume_mobile_input")
+            r_email = st.text_input(get_text("Email ID", lang))
+            r_link = st.text_input(get_text("LinkedIn URL (Optional)", lang))
+            r_git = st.text_input(get_text("GitHub URL (Optional)", lang))
+            r_exp = st.text_area(get_text("Experiences (Roles, Companies, Dates)", lang), height=100)
+            r_edu = st.text_area(get_text("Education (Degrees, Institutions, Dates)", lang), height=100)
+            r_proj = st.text_area(get_text("Projects (Names, Tech Stack, Outcomes)", lang), height=100)
+            
+        with rc2:
+            job_desc = st.text_area(get_text("Job Description (Target Role)", lang), height=300)
+            
+            if st.button(get_text("✨ Generate Tailored Resume", lang), use_container_width=True):
+                combined_info = ""
+                if uploaded_resume and PDF_TOOLS_AVAILABLE and uploaded_resume.name.endswith(".pdf"):
+                    reader = PdfReader(uploaded_resume)
+                    combined_info += "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+                elif uploaded_resume:
+                    combined_info += uploaded_resume.getvalue().decode("utf-8", errors="ignore")
+                
+                manual_data = f"Name: {r_name}\nMobile: {r_mobile}\nEmail: {r_email}\nLinkedIn: {r_link}\nGitHub: {r_git}\nExperience: {r_exp}\nEducation: {r_edu}\nProjects: {r_proj}"
+                if len(manual_data.replace("Name: \nMobile: \nEmail: \nLinkedIn: \nGitHub: \nExperience: \nEducation: \nProjects: ", "").strip()) > 0:
+                    combined_info += "\n\n" + manual_data
+                    
+                if not combined_info.strip():
+                    st.error(get_text("Please provide either manual details or upload a resume.", lang))
+                elif not job_desc.strip():
+                    st.error(get_text("Please provide a Job Description.", lang))
+                else:
+                    with st.spinner(get_text("Generating resume...", lang)):
+                        tailored_text = generate_tailored_resume(combined_info, job_desc, lang)
+                        st.session_state[f"resume_output_{current_user}"] = tailored_text
+                        
+        if f"resume_output_{current_user}" in st.session_state:
+            res_txt = st.session_state[f"resume_output_{current_user}"]
+            st.divider()
+            st.text_area("Generated Tailored Resume", res_txt, height=400)
+            if PDF_TOOLS_AVAILABLE:
+                pdf_bytes = create_pdf(res_txt)
+                if pdf_bytes:
+                    st.download_button(
+                        label=get_text("📥 Download Resume (PDF)", lang),
+                        data=pdf_bytes,
+                        file_name="Tailored_Resume.pdf",
+                        mime="application/pdf"
+                    )
+                    
+    with tab_expenses:
+        st.header(get_text("💰 Expense Tracker", lang))
+        if current_user == "guest":
+            st.info(get_text("Please log in to manage your expenses.", lang))
+        else:
+            with st.form("add_expense_form"):
+                col_e1, col_e2 = st.columns(2)
+                e_amount = col_e1.number_input(get_text("Amount", lang), min_value=0.0, format="%.2f")
+                e_category = col_e2.selectbox(get_text("Category", lang), [
+                    get_text("Food", lang), get_text("Transport", lang), 
+                    get_text("Shopping", lang), get_text("Bills", lang), get_text("Other", lang)
+                ])
+                e_desc = st.text_input(get_text("Description", lang))
+                e_date = st.date_input(get_text("Date", lang))
+                
+                if st.form_submit_button(get_text("➕ Add Expense", lang)):
+                    if e_amount > 0:
+                        tools.add_expense(e_amount, e_category, e_desc, e_date.strftime("%Y-%m-%d"), current_user)
+                        st.success(get_text("Expense added successfully!", lang))
+                        st.rerun()
+                    else:
+                        st.error(get_text("Amount must be greater than 0.", lang))
+
+            exp_df = load_expenses_df(current_user)
+            if not exp_df.empty:
+                today = pd.Timestamp.today().date()
+                this_month = today.replace(day=1)
+                
+                daily_total = exp_df[exp_df['Date'] == today]['Amount'].sum()
+                monthly_total = exp_df[pd.to_datetime(exp_df['Date']) >= pd.to_datetime(this_month)]['Amount'].sum()
+                
+                st.divider()
+                m1, m2 = st.columns(2)
+                m1.metric(get_text("Daily Total", lang), f"${daily_total:.2f}")
+                m2.metric(get_text("Monthly Total", lang), f"${monthly_total:.2f}")
+                
+                st.subheader(get_text("📊 Expense Summary", lang))
+                exp_editor = exp_df.copy()
+                exp_editor.insert(0, "🗑️", False)
+                
+                edited_exp = st.data_editor(
+                    exp_editor, hide_index=True, use_container_width=True,
+                    column_config={"🗑️": st.column_config.CheckboxColumn(get_text("Delete?", lang), default=False), "Owner": None},
+                    key="expense_editor"
+                )
+                if st.button(get_text("💾 Save Changes", lang), key="save_exp_btn"):
+                    save_df = edited_exp[edited_exp["🗑️"] == False].drop(columns=["🗑️"])
+                    if os.path.exists(tools.EXPENSES_FILE):
+                        full_exp = pd.read_csv(tools.EXPENSES_FILE, dtype={'Owner': str})
+                        full_exp['Owner'] = full_exp['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+                        other_exp = full_exp[full_exp['Owner'] != current_user]
+                        pd.concat([other_exp, save_df], ignore_index=True).to_csv(tools.EXPENSES_FILE, index=False)
+                    st.success(get_text("Changes saved!", lang))
+                    st.rerun()
 
 if __name__ == "__main__":
     main()

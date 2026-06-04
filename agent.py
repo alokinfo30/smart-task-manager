@@ -32,6 +32,7 @@ Capabilities:
 5. Maintain a professional, encouraging, and organized tone.
 6. Use the 'log_report' tool whenever you generate a detailed analysis, summary, or when the user asks to 'save' a response.
 7. When adding a task, only ask the user for the task name. You must automatically set the priority to 'High' and the date to the current date (today) when calling the 'add_task' tool. You can also specify a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument if the user wants to share the task with specific individuals.
+8. Manage and analyze the user's daily and monthly finances using the 'add_expense' and 'read_expenses' tools when requested.
 8. Motivation & Strategy: Encourage users to improve their 'Sprint Speed' and reach 'Elite Executioner' rank by completing tasks quickly. Provide positive reinforcement. ALWAYS suggest the best strategic plan based on their pending tasks and daily routines to help them achieve peak productivity and become the best version of themselves.
 9. Privacy Rules: You can see your tasks and tasks explicitly shared with your mobile number. You can modify tasks you own or tasks that are explicitly shared with your mobile number.
    If a user asks to share a task, use the 'add_task' tool and provide a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument.
@@ -217,6 +218,12 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
 
     def read_routines(*args, **kwargs):
         return tools.read_routines()
+        
+    def add_expense(amount: float, category: str, description: str, date: str = None, **kwargs):
+        return tools.add_expense(amount=amount, category=category, description=description, date=date, owner=user_id)
+
+    def read_expenses(*args, **kwargs):
+        return tools.read_expenses()
 
     dynamic_instruction = SYSTEM_INSTRUCTION + f"\n11. Language: You MUST ALWAYS respond to the user in {language}."
     config = genai.types.GenerateContentConfig(
@@ -229,6 +236,8 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
             update_task_status,
             log_report,
             read_routines,
+            add_expense,
+            read_expenses,
         ],
         tool_config=genai.types.ToolConfig(
             function_calling_config=genai.types.FunctionCallingConfig(
@@ -280,6 +289,118 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments.", history or []
     return f"Error: {str(last_error)}", history or []
+    
+def generate_learning_content(topic_or_jd: str, language: str = "English") -> str:
+    """Generates a learning module on a specific topic or a learning plan from a job description."""
+    if not api_key or not client:
+        return "Error: GOOGLE_API_KEY not found. Please set it to enable Agentic AI features."
+
+    is_job_description = len(topic_or_jd.split()) > 30 # Heuristic to detect a JD
+
+    if is_job_description:
+        prompt = f"""
+        You are an expert career coach and technical tutor. The user has provided a job description and wants a learning plan to acquire the necessary skills.
+
+        Job Description:
+        ---
+        {topic_or_jd}
+        ---
+
+        Please analyze the job description in {language} and generate a structured learning plan. For each key skill or technology identified, provide a mini-learning module with this exact structure:
+        1. **Basic Concepts**: Explain the topic simply and clearly.
+        2. **Key Areas to Focus On**: List the most important sub-topics relevant to the job description.
+        3. **Learning Resources**: Suggest 1-2 high-quality online resources (like official documentation, tutorials, or articles) to learn the topic.
+        
+        Organize the output by the most important skills first.
+        """
+    else:
+        prompt = f"""
+        You are an expert educational tutor. The user wants to learn about: '{topic_or_jd}'.
+        
+        Please generate a comprehensive learning module in {language} following this exact structure:
+        1. **Basic Concepts**: Explain the topic simply and clearly.
+        2. **Syntax & Examples**: Provide code snippets or practical examples depending on the topic.
+        3. **Practice Quiz**: Provide 3 to 5 objective questions (multiple choice) to test the user's knowledge.
+        4. **Answers**: Provide the correct answers for the quiz at the very end.
+        """
+    
+    last_error = None
+    for model_name in MODEL_FALLBACKS:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            return extract_response_text(response)
+        except Exception as e:
+            last_error = e
+            print(f"Model {model_name} failed for learning content: {e}")
+            
+            error_text = str(e)
+            if "RESOURCE_EXHAUSTED" in error_text or "quota" in error_text.lower():
+                return "⏳ **Rate Limit Reached**: You are moving too fast for the free tier! Please wait about 60 seconds for your quota to reset and try again."
+            if "not found" in error_text.lower() or "unsupported" in error_text.lower():
+                continue
+            break
+            
+    if last_error:
+        le = str(last_error)
+        if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
+            return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
+        return f"Failed to generate learning content. Error: {le}"
+
+    return "Failed to generate learning content. Please try again later."
+
+def generate_tailored_resume(user_info: str, job_desc: str, language: str = "English") -> str:
+    """Generates a professionally formatted resume based on user details and job description."""
+    if not api_key or not client:
+        return "Error: GOOGLE_API_KEY not found. Please set it to enable Agentic AI features."
+
+    prompt = f"""
+    You are an Expert Executive Resume Writer and Career Coach. 
+    The user wants to tailor their resume for a specific Job Description.
+
+    User Details & Raw Resume Data:
+    {user_info}
+
+    Target Job Description:
+    {job_desc}
+
+    Please generate a professional, highly-tailored resume in {language} based ONLY on the provided user details. 
+    Align their experience, projects, and skills to highlight their fit for the Job Description.
+    Format the resume cleanly using plain text. 
+    RULES FOR FORMATTING: 
+    - Use ALL CAPS for section headers (e.g., SUMMARY, SKILLS, EXPERIENCE, EDUCATION, PROJECTS).
+    - Do NOT use asterisks (*) or hash symbols (#) for markdown headers. 
+    - Use standard dash (-) for bullet points.
+    """
+    
+    last_error = None
+    for model_name in MODEL_FALLBACKS:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            return extract_response_text(response)
+        except Exception as e:
+            last_error = e
+            print(f"Model {model_name} failed for tailored resume: {e}")
+            
+            error_text = str(e)
+            if "RESOURCE_EXHAUSTED" in error_text or "quota" in error_text.lower():
+                return "⏳ **Rate Limit Reached**: You are moving too fast for the free tier! Please wait about 60 seconds for your quota to reset and try again."
+            if "not found" in error_text.lower() or "unsupported" in error_text.lower():
+                continue
+            break
+            
+    if last_error:
+        le = str(last_error)
+        if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
+            return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
+        return f"Failed to generate tailored resume. Error: {le}"
+
+    return "Failed to generate tailored resume. Please try again later."
 
 if __name__ == "__main__":
     # Initialize a demo todo file if it doesn't exist
