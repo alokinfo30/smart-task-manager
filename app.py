@@ -106,6 +106,7 @@ def get_auth0_client():
 
 # --- WebSocket Server for Real-Time Multiplayer Sync ---
 WS_PORT = 8765
+WS_HOST = os.getenv("WEBSOCKET_HOST", "localhost")
 connected_clients = set()
 ws_loop = None
 
@@ -123,7 +124,7 @@ async def ws_handler(websocket, *args, **kwargs):
 async def ws_main():
     """Async context for running the WebSocket server."""
     try:
-        async with websockets.serve(ws_handler, "localhost", WS_PORT):
+        async with websockets.serve(ws_handler, WS_HOST, WS_PORT):
             await asyncio.Future()  # Run forever
     except OSError:
         # Port already in use (likely due to Streamlit's auto-reloader)
@@ -134,7 +135,7 @@ def run_ws_server():
     ws_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(ws_loop)
     try:
-        server = websockets.serve(ws_handler, "localhost", WS_PORT)
+        server = websockets.serve(ws_handler, WS_HOST, WS_PORT)
         ws_loop.run_until_complete(server)
         ws_loop.run_forever()
     except OSError:
@@ -171,7 +172,7 @@ def render_websocket_client():
     js = f"""
     <script>
         if (!window.wsSyncConnected) {{
-            const ws = new WebSocket('ws://localhost:{WS_PORT}');
+            const ws = new WebSocket('ws://{WS_HOST}:{WS_PORT}');
             ws.onmessage = function(event) {{
                 if (event.data === 'update' && Notification.permission === 'granted') {{
                     new Notification('Smart Task Agent', {{ body: 'Task board updated remotely by another device or AI.' }});
@@ -588,7 +589,46 @@ def render_auth_ui():
 
 
 def main():
-    st.set_page_config(page_title="Smart Task Manager", page_icon="🚀", layout="wide")
+    # Set page configuration (This MUST be the first Streamlit command and called only once)
+    st.set_page_config(page_title="Smart Task Manager - AI Powered Assistant", page_icon="🚀", layout="wide")
+
+    # Load Google Analytics ID from .env
+    ga_id = os.getenv("GA_MEASUREMENT_ID")
+    ga_script = ""
+    if ga_id:
+        ga_script = f"""
+        <!-- Google Analytics (GA4) Tracking Snippet -->
+        <script async src="https://www.googletagmanager.com/gtag/js?id={ga_id}"></script>
+        <script>
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){{dataLayer.push(arguments);}}
+          gtag('js', new Date());
+          gtag('config', '{ga_id}');
+        </script>
+        """
+
+    # Inject SEO Meta Tags, JSON-LD structured data, and Google Analytics
+    st.markdown(f"""
+        <meta name="description" content="Smart Task Manager: An AI-powered task assistant using Streamlit and Gemini. Features automated analysis, persistent history, resume builder, expense tracker, and real-time productivity metrics.">
+        <meta name="keywords" content="AI Task Manager, Productivity Tracker, Autonomous AI Agent, Expense Tracker, AI Resume Builder, Smart Task Management, Gemini AI, Task Automation, Learning Hub, Punctuality Tracker">
+        <meta name="author" content="Smart Task Manager">
+        <meta name="robots" content="index, follow">
+        <meta property="og:title" content="Smart Task Manager - AI Powered Assistant">
+        <meta property="og:description" content="Boost your productivity with an Autonomous AI Agent that manages tasks, tracks expenses, and builds your resume.">
+        <meta property="og:type" content="website">
+        <script type="application/ld+json">
+        {{
+          "@context": "https://schema.org",
+          "@type": "SoftwareApplication",
+          "name": "Smart Task Manager",
+          "operatingSystem": "Web",
+          "applicationCategory": "ProductivityApplication",
+          "description": "An AI-powered task assistant using Gemini, featuring automated analysis, persistent history, resume builder, expense tracker, and real-time productivity metrics tracking.",
+          "offers": {{ "@type": "Offer", "price": "0", "priceCurrency": "USD" }}
+        }}
+        </script>
+        {ga_script}
+    """, unsafe_allow_html=True)
 
     # Initialize state at the very beginning
     init_session_state()
@@ -1513,11 +1553,51 @@ def render_dashboard(current_user):
                 with st.spinner(get_text("Generating lesson...", lang)):
                     lesson_content = generate_learning_content(topic.strip(), lang)
                     st.session_state[f"lesson_{current_user}"] = lesson_content
+                    st.session_state[f"lesson_topic_{current_user}"] = topic.strip()
         
         lesson = st.session_state.get(f"lesson_{current_user}")
         if lesson:
             st.divider()
             st.markdown(lesson)
+            
+            st.divider()
+            col_act1, col_act2 = st.columns([1, 1])
+            
+            current_topic = st.session_state.get(f"lesson_topic_{current_user}", "AI Lesson")
+            
+            with col_act1:
+                if current_user != "guest":
+                    if st.button(get_text("💾 Archive Lesson", lang), use_container_width=True):
+                        archive_text = f"--- AI Lesson: {current_topic} ---\n{lesson}"
+                        status = tools.log_report(archive_text)
+                        if "Success" in status:
+                            st.success(get_text("Lesson archived successfully!", lang))
+                        else:
+                            st.error(status)
+                else:
+                    st.info(get_text("Log in to archive lessons.", lang))
+            
+            with col_act2:
+                st.markdown(f"**{get_text('Share Lesson:', lang)}**")
+                app_url = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
+                tweet_text = urllib.parse.quote(f"{app_url}\n\nI just generated an AI lesson on '{current_topic}'! \n\nCheck out Smart Task Manager. 🚀")
+                wa_text = urllib.parse.quote(f"{app_url}\n\nCheck out this AI lesson on '{current_topic}':\n\n{lesson[:1000]}...")
+                email_body = urllib.parse.quote(f"{app_url}\n\nCheck out this AI lesson on '{current_topic}':\n\n{lesson}")
+                email_sub = urllib.parse.quote(f"AI Lesson: {current_topic}")
+                
+                st.markdown(f"""
+                <div style="display: flex; gap: 10px;">
+                    <a href="https://twitter.com/intent/tweet?text={tweet_text}" target="_blank" style="text-decoration:none;">
+                        <button style="background-color:#1DA1F2; color:white; border:none; padding:5px 15px; border-radius:5px; cursor:pointer;">🐦 X (Twitter)</button>
+                    </a>
+                    <a href="https://api.whatsapp.com/send?text={wa_text}" target="_blank" style="text-decoration:none;">
+                        <button style="background-color:#25D366; color:white; border:none; padding:5px 15px; border-radius:5px; cursor:pointer;">📱 WhatsApp</button>
+                    </a>
+                    <a href="mailto:?subject={email_sub}&body={email_body}" target="_blank" style="text-decoration:none;">
+                        <button style="background-color:#D44638; color:white; border:none; padding:5px 15px; border-radius:5px; cursor:pointer;">📧 Email</button>
+                    </a>
+                </div>
+                """, unsafe_allow_html=True)
             
     with tab_resume:
         st.header(get_text("📄 Resume Builder", lang))

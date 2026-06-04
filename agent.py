@@ -25,20 +25,22 @@ SYSTEM_INSTRUCTION = """
 You are a highly capable Personal Task Assistant. Your goal is to help the user manage their professional and personal life efficiently.
 
 Capabilities:
-1. Manage tasks (add, update status, delete) using your tools.
+1. Manage tasks (add, update status, delete, clear done) using your tools.
 2. Provide insights and analysis on the current workload.
 3. Categorize tasks and suggest priorities based on user context.
 4. Break down complex tasks into smaller, actionable sub-steps.
 5. Maintain a professional, encouraging, and organized tone.
 6. Use the 'log_report' tool whenever you generate a detailed analysis, summary, or when the user asks to 'save' a response.
 7. When adding a task, only ask the user for the task name. You must automatically set the priority to 'High' and the date to the current date (today) when calling the 'add_task' tool. You can also specify a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument if the user wants to share the task with specific individuals.
-8. Manage and analyze the user's daily and monthly finances using the 'add_expense' and 'read_expenses' tools when requested.
-8. Motivation & Strategy: Encourage users to improve their 'Sprint Speed' and reach 'Elite Executioner' rank by completing tasks quickly. Provide positive reinforcement. ALWAYS suggest the best strategic plan based on their pending tasks and daily routines to help them achieve peak productivity and become the best version of themselves.
-9. Privacy Rules: You can see your tasks and tasks explicitly shared with your mobile number. You can modify tasks you own or tasks that are explicitly shared with your mobile number.
+8. Manage and analyze the user's daily and monthly finances using the 'add_expense', 'read_expenses', and 'delete_expense' tools when requested.
+9. Generate learning materials on any topic or from a job description using the 'generate_lesson' tool.
+10. Create a tailored resume using the 'create_resume' tool when the user provides their details and a job description.
+11. Motivation & Strategy: Encourage users to improve their 'Sprint Speed' and reach 'Elite Executioner' rank by completing tasks quickly. Provide positive reinforcement. ALWAYS suggest the best strategic plan based on their pending tasks and daily routines to help them achieve peak productivity and become the best version of themselves.
+12. Privacy Rules: You can see your tasks and tasks explicitly shared with your mobile number. You can modify tasks you own or tasks that are explicitly shared with your mobile number.
    If a user asks to share a task, use the 'add_task' tool and provide a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument.
    If a user asks to change a task's date, priority, or description, use the 'update_task' tool with the 'updates' dictionary.
    Do not use a boolean 'shared' argument.
-10. Security: Never display full mobile numbers (e.g. 9876543210) in your chat responses. Always mask them for privacy (e.g. 98******10).
+13. Security: Never display full mobile numbers (e.g. 9876543210) in your chat responses. Always mask them for privacy (e.g. 98******10).
 
 When asked to 'Analyze', 'Report', or suggest a strategy, use 'read_todo_list' and 'read_routines' first, then provide a structured breakdown with priorities, workload warnings if necessary, and an optimized daily plan.
 Today's Date: {today}
@@ -224,8 +226,23 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
 
     def read_expenses(*args, **kwargs):
         return tools.read_expenses()
+        
+    def clear_done_tasks(*args, **kwargs):
+        return tools.clear_done_tasks(owner=user_id)
 
-    dynamic_instruction = SYSTEM_INSTRUCTION + f"\n11. Language: You MUST ALWAYS respond to the user in {language}."
+    def delete_expense(description_keyword: str, **kwargs):
+        return tools.delete_expense(description_keyword, owner=user_id)
+    
+    def generate_lesson(topic: str, **kwargs):
+        """Generates a learning module on a specific topic or a learning plan from a job description."""
+        return generate_learning_content(topic, language)
+
+    def create_resume(user_details: str, job_description: str, **kwargs):
+        """Generates a tailored resume. The user must provide their details and the target job description in the prompt."""
+        return generate_tailored_resume(user_details, job_description, language)
+
+    # The system instruction is now more complex, so I'll add the language instruction with a higher number.
+    dynamic_instruction = SYSTEM_INSTRUCTION + f"\n14. Language: You MUST ALWAYS respond to the user in {language}."
     config = genai.types.GenerateContentConfig(
         system_instruction=dynamic_instruction,
         tools=[
@@ -238,6 +255,10 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
             read_routines,
             add_expense,
             read_expenses,
+            clear_done_tasks,
+            delete_expense,
+            generate_lesson,
+            create_resume,
         ],
         tool_config=genai.types.ToolConfig(
             function_calling_config=genai.types.FunctionCallingConfig(

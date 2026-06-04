@@ -313,3 +313,56 @@ def read_expenses() -> str:
         return visible_df.to_csv(index=False) if not visible_df.empty else "No expenses found for you."
     except Exception as e:
         return f"Error reading expenses: {str(e)}"
+
+def clear_done_tasks(owner: str = None) -> str:
+    """
+    Deletes all tasks with the status 'Done' for the current user.
+    """
+    try:
+        if not os.path.exists(TODO_FILE):
+            return "No tasks to clear."
+        
+        user = owner if owner else get_current_user()
+        with file_lock:
+            df = pd.read_csv(TODO_FILE, dtype={'Owner': str})
+            if 'Owner' not in df.columns: df['Owner'] = ""
+            df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+
+            # Keep tasks that are NOT owned by the user OR are owned but NOT 'Done'
+            mask = (df['Owner'] != user) | (df['Status'] != 'Done')
+            cleared_count = len(df) - len(df[mask])
+            
+            if cleared_count == 0:
+                return "No 'Done' tasks found to clear."
+
+            df[mask].to_csv(TODO_FILE, index=False)
+        
+        return f"Success: Cleared {cleared_count} completed tasks from your board."
+    except Exception as e:
+        return f"Error clearing done tasks: {str(e)}"
+
+def delete_expense(description_keyword: str, owner: str = None) -> str:
+    """
+    Deletes expenses based on a keyword match in the description.
+    """
+    try:
+        if not os.path.exists(EXPENSES_FILE):
+            return "No expenses found to delete."
+        
+        user = owner if owner else get_current_user()
+        with file_lock:
+            df = pd.read_csv(EXPENSES_FILE, dtype={'Owner': str})
+            if 'Owner' not in df.columns: df['Owner'] = ""
+            df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+
+            mask = (df['Description'].str.contains(description_keyword, case=False, na=False)) & (df['Owner'] == user)
+            
+            if not mask.any():
+                return f"No expenses found with description matching '{description_keyword}'."
+            
+            deleted_count = mask.sum()
+            df[~mask].to_csv(EXPENSES_FILE, index=False)
+            
+        return f"Success: Deleted {deleted_count} expense(s) matching '{description_keyword}'."
+    except Exception as e:
+        return f"Error deleting expense: {str(e)}"

@@ -109,6 +109,61 @@ Make sure to install the required PDF dependencies to use the Resume generation 
 3. Want to do it hands-free? Go to the Agent tab and say: "I just bought $50 of Groceries, log it."
 4. Your Daily and Monthly spending metrics will instantly update on the dashboard!
 
+### Step 8: Activating Google Analytics (Traffic Tracking)
+To see how many users are visiting your app, where they are from, and what features they use, you can activate the built-in Google Analytics tracker:
+1. **Visit Google Analytics**: Go to [analytics.google.com](https://analytics.google.com/) and sign in with your Google account.
+2. **Create a Property**: Click the blue "Start measuring" button. (If you already have an account, click the Admin gear icon ⚙️ at the bottom left, then click **Create Property**).
+3. **Property Details**: Name your property (e.g., "Smart Task Manager"), select your timezone/currency, and click Next.
+4. **Choose Platform**: When asked to choose a platform to collect data, click on **Web**.
+5. **Set up Data Stream**: Enter your website's URL (if you are just testing locally, you can type `localhost`) and give your stream a name. Click **Create stream**.
+6. **Copy Your Measurement ID**: On the "Web stream details" page that pops up, look at the top right corner for the **Measurement ID**. It always starts with `G-` (for example, `G-A1B2C3D4E5`). Copy this exact ID.
+7. **Update your Environment Variables**: Open your `.env` file and add the following line: `GA_MEASUREMENT_ID="G-YOUR_COPIED_ID"`
+8. **Restart**: Restart your Streamlit server. The app will automatically inject the tracking code, and the next time someone opens your app, their visit will be recorded live in your Google Analytics dashboard!
+
+---
+
+## 🚀 Production & Deployment Notes
+
+This application is designed to be compatible with both local development (e.g., `http://localhost:8501`) and a live production server (e.g., `https://staskma.streamlit.app/`). The configuration is managed through environment variables.
+
+### Environment Variable Configuration
+
+#### 1. Development (Local Machine)
+For local development, create a file named `.env` in the root of your project. This file is loaded automatically and should contain all your secrets and local URLs. **This file should NOT be committed to version control (e.g., Git).**
+
+*Example `.env` for local development:*
+```
+GOOGLE_API_KEY="your_google_api_key"
+APP_BASE_URL="http://localhost:8501"
+WEBSOCKET_HOST="localhost"
+GA_MEASUREMENT_ID="G-YOUR_DEV_ID"
+# ... other keys like Auth0, Gmail, Telegram ...
+```
+
+#### 2. Production (Live Server)
+When you deploy your app to a service like Streamlit Community Cloud, you do **not** upload your `.env` file. Instead, you configure these values as "Secrets" in the service's settings dashboard.
+
+*Example Secrets for `https://staskma.streamlit.app/`:*
+```toml
+# In your Streamlit Cloud secrets editor
+GOOGLE_API_KEY = "your_google_api_key"
+APP_BASE_URL = "https://staskma.streamlit.app"
+# WEBSOCKET_HOST = "staskma.streamlit.app" # See note below
+GA_MEASUREMENT_ID = "G-YOUR_PROD_ID"
+# ... other keys ...
+```
+The application code (`app.py`, `agent.py`) is already written to read these environment variables, so it will automatically adapt to whichever environment it's running in.
+
+### Real-Time Sync (WebSockets) - Important Note
+The current real-time sync feature runs a Python `websockets` server on a custom port (`8765`). This works perfectly for local development.
+
+However, this architecture is **not compatible with Streamlit Community Cloud**, as it does not allow running background servers on custom ports. To deploy the real-time sync feature to production, you have two main options:
+1.  **Deploy on a Virtual Private Server (VPS)**: Use a provider like DigitalOcean, AWS EC2, or Linode where you have full control to run the Streamlit app and open port `8765`. In this case, you would set `WEBSOCKET_HOST` to your server's domain name.
+2.  **Refactor to a Managed Service**: Modify the WebSocket logic in `app.py` to use a third-party service like Pusher or Ably. This is the most robust solution for scalable, real-time features on any platform.
+
+### Data Persistence
+The application currently uses local flat files (`.txt`, `.csv`, `.json`) for data storage. This is suitable for local development. For production deployments on ephemeral filesystems (like Heroku, Streamlit Community Cloud), this data will be lost on app restarts. For a robust production setup, you should consider migrating the data storage logic in `tools.py` to a persistent database service (e.g., PostgreSQL, MySQL, or a cloud-based NoSQL DB).
+
 ---
 
 ## 🤖 About Agentic AI in this Project
