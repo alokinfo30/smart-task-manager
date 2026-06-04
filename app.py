@@ -40,6 +40,7 @@ from auth0_server_python.store.abstract import AbstractDataStore
 from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state
 import tools # Import the whole module to access context
 from auth import SessionManager, PasswordHandler, AuthenticationError, SECURITY_QUESTIONS
+from translations import get_text
 
 load_dotenv()
 
@@ -233,10 +234,35 @@ def mask_mobile(mobile):
         return "****"
     return f"{val[:2]}******{val[-2:]}"
 
+def get_default_language():
+    """Guess default language based on user IP geolocation."""
+    try:
+        # Fast, free IP geolocation
+        response = requests.get('https://ipapi.co/json/', timeout=3)
+        if response.status_code == 200:
+            country = response.json().get("country_code", "")
+            mapping = {
+                "CN": "Mandarin Chinese", "TW": "Mandarin Chinese", "HK": "Mandarin Chinese",
+                "IN": "Hindi",
+                "ES": "Spanish", "MX": "Spanish", "AR": "Spanish", "CO": "Spanish", "PE": "Spanish", "CL": "Spanish", "VE": "Spanish",
+                "AE": "Standard Arabic", "SA": "Standard Arabic", "EG": "Standard Arabic", "IQ": "Standard Arabic", "MA": "Standard Arabic", "DZ": "Standard Arabic",
+                "FR": "French", "SN": "French", "CI": "French", "CD": "French",
+                "BD": "Bengali",
+                "BR": "Portuguese", "PT": "Portuguese", "AO": "Portuguese", "MZ": "Portuguese",
+                "RU": "Russian", "BY": "Russian", "KZ": "Russian",
+                "PK": "Urdu"
+            }
+            return mapping.get(country, "English")
+    except Exception:
+        pass
+    return "English"
+
 def init_session_state():
     """Initialize session state for authentication."""
     if "checkbox_suffix" not in st.session_state:
         st.session_state.checkbox_suffix = 0
+    if "language" not in st.session_state:
+        st.session_state.language = get_default_language()
     if "current_user" not in st.session_state:
         # 1. Check for Auth0 authorization code callback
         if "code" in st.query_params and "state" in st.query_params:
@@ -368,20 +394,23 @@ def load_todo_df(current_user):
 
 def render_auth_ui():
     """Render the secure authentication UI with encrypted PIN."""
-    st.sidebar.title("🔐 Sign In / Register")
-    
     init_session_state()
+    lang = st.session_state.language
+    language_options = ["English", "Mandarin Chinese", "Hindi", "Spanish", "Standard Arabic", "French", "Bengali", "Portuguese", "Russian", "Urdu"]
+    st.sidebar.selectbox(get_text("🌐 Language / भाषा / Idioma", lang), language_options, key="language")
+    lang = st.session_state.language # Refresh after selection change
+    st.sidebar.title(get_text("🔐 Sign In / Register", lang))
     
     if st.session_state.current_user == "guest":
-        st.sidebar.subheader("🚀 Quick Test")
-        st.sidebar.info("Want to test features without registering?")
-        if st.sidebar.button("Login as Demo User", use_container_width=True):
+        st.sidebar.subheader(get_text("🚀 Quick Test", lang))
+        st.sidebar.info(get_text("Want to test features without registering?", lang))
+        if st.sidebar.button(get_text("Login as Demo User", lang), use_container_width=True):
             st.session_state.current_user = "demo_user"
             st.session_state.auth_method = "Demo"
             st.rerun()
             
         st.sidebar.divider()
-        st.sidebar.subheader("🌐 Login with Email / Social")
+        st.sidebar.subheader(get_text("🌐 Login with Email / Social", lang))
         
         if os.getenv("AUTH0_DOMAIN") and os.getenv("AUTH0_CLIENT_ID"):
             auth0 = get_auth0_client()
@@ -389,43 +418,43 @@ def render_auth_ui():
                 options=StartInteractiveLoginOptions(),
                 store_options={}
             ))
-            st.sidebar.markdown(f'<a href="{auth_url}" target="_self"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">Continue with Email / Social</button></a>', unsafe_allow_html=True)
-            st.sidebar.caption("Secure Login")
+            st.sidebar.markdown(f'<a href="{auth_url}" target="_self"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">{get_text("Continue with Email / Social", lang)}</button></a>', unsafe_allow_html=True)
+            st.sidebar.caption(get_text("Secure Login", lang))
         else:
             st.sidebar.info("Auth0 SSO is not configured. Set `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, and `AUTH0_SECRET` in `.env`.")
             
         st.sidebar.divider()
 
-        st.sidebar.subheader("📱 Mobile Number & PIN")
-        mobile_input = st.sidebar.text_input("Mobile Number", placeholder="e.g. 9876543210", key="auth_mobile")
-        pin_input = st.sidebar.text_input("6-Digit PIN", type="password", help="Enter your 6-digit PIN", key="auth_pin")
-        remember_me = st.sidebar.checkbox("Remember Me", value=True, help="Keep me logged in even after page refresh")
+        st.sidebar.subheader(get_text("📱 Mobile Number & PIN", lang))
+        mobile_input = st.sidebar.text_input(get_text("Mobile Number", lang), placeholder="e.g. 9876543210", key="auth_mobile")
+        pin_input = st.sidebar.text_input(get_text("6-Digit PIN", lang), type="password", help="Enter your 6-digit PIN", key="auth_pin")
+        remember_me = st.sidebar.checkbox(get_text("Remember Me", lang), value=True, help="Keep me logged in even after page refresh")
 
         if not mobile_input or len(mobile_input) < 10:
-            st.sidebar.warning("⚠️  Enter a valid mobile number")
+            st.sidebar.warning(get_text("⚠️ Enter a valid mobile number", lang))
             return "guest"
 
         col_reg, col_log = st.sidebar.columns(2)
 
         with col_reg:
-            if st.button("📝 Register", use_container_width=True):
+            if st.button(get_text("📝 Register", lang), use_container_width=True):
                 st.session_state.show_reg_form = True
 
         if st.session_state.get("show_reg_form", False):
-            with st.sidebar.expander("Complete Registration", expanded=True):
-                q = st.selectbox("Security Question", SECURITY_QUESTIONS)
-                a = st.text_input("Answer", placeholder="Your secret answer")
-                if st.button("Confirm Registration", use_container_width=True):
+            with st.sidebar.expander(get_text("Complete Registration", lang), expanded=True):
+                q = st.selectbox(get_text("Security Question", lang), SECURITY_QUESTIONS)
+                a = st.text_input(get_text("Answer", lang), placeholder="Your secret answer")
+                if st.button(get_text("Confirm Registration", lang), use_container_width=True):
                     try:
                         if PasswordHandler.register(mobile_input, pin_input, q, a):
-                            st.success("Account created!")
+                            st.success(get_text("Account created!", lang))
                             st.session_state.show_reg_form = False
                             st.rerun()
                     except AuthenticationError as e:
                         st.error(str(e))
 
         with col_log:
-            if st.button("🔐 Login", use_container_width=True):
+            if st.button(get_text("🔐 Login", lang), use_container_width=True):
                 try:
                     if PasswordHandler.login(mobile_input, pin_input):
                         st.session_state.current_user = mobile_input
@@ -438,23 +467,23 @@ def render_auth_ui():
                 except AuthenticationError as e:
                     st.sidebar.error(str(e))
 
-        if st.sidebar.button("❓ Forgot PIN?", use_container_width=True):
+        if st.sidebar.button(get_text("❓ Forgot PIN?", lang), use_container_width=True):
             st.session_state.forgot_pin_flow = True
 
         if st.session_state.get("forgot_pin_flow", False):
-            with st.sidebar.expander("Recover PIN", expanded=True):
+            with st.sidebar.expander(get_text("Recover PIN", lang), expanded=True):
                 try:
                     question = PasswordHandler.get_user_security_question(mobile_input)
                     st.write(f"**Question**: {question}")
-                    ans = st.text_input("Security Answer", type="password")
-                    if st.button("Verify & Show New PIN"):
+                    ans = st.text_input(get_text("Answer", lang), type="password")
+                    if st.button(get_text("Verify & Show New PIN", lang)):
                         new_p = PasswordHandler.verify_answer_and_reset_pin(mobile_input, ans)
-                        st.success(f"Recovery Successful!")
+                        st.success(get_text("Recovery Successful!", lang))
                         st.code(f"Your NEW PIN is: {new_p}")
-                        st.warning("⚠️ Write this down! This message will disappear on refresh.")
+                        st.warning(get_text("⚠️ Write this down! This message will disappear on refresh.", lang))
                 except AuthenticationError as e:
                     st.error(str(e))
-                if st.button("Cancel"):
+                if st.button(get_text("Cancel", lang)):
                     st.session_state.forgot_pin_flow = False
                     st.rerun()
             
@@ -463,11 +492,11 @@ def render_auth_ui():
         
     else:
         # User is logged in
-        st.sidebar.success(f"✅ Logged in as: **{mask_mobile(st.session_state.current_user)}**")
+        st.sidebar.success(f"{get_text('✅ Logged in as:', lang)} **{mask_mobile(st.session_state.current_user)}**")
         auth_method_display = f" ({st.session_state.auth_method})" if st.session_state.auth_method else ""
-        st.sidebar.caption(f"Auth Method: {auth_method_display}")
+        st.sidebar.caption(f"{get_text('Auth Method:', lang)} {auth_method_display}")
         
-        if st.sidebar.button("🚪 Logout", use_container_width=True):
+        if st.sidebar.button(get_text("🚪 Logout", lang), use_container_width=True):
             if "u" in st.query_params:
                 token_param = st.query_params.get("u")
                 token = token_param[0] if isinstance(token_param, list) and token_param else token_param
@@ -515,7 +544,7 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("🤖 Smart Task Manager Agent")
+    st.title(get_text("🤖 Smart Task Manager Agent", st.session_state.language))
 
     # API Key Warning
     if not os.getenv("GOOGLE_API_KEY"):
@@ -523,8 +552,8 @@ def main():
     
     # Guest Account Warning
     if current_user == "guest":
-        st.warning("⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.")
-        st.info("As a guest, you cannot use the AI assistant, save tasks, or view archives.")
+        st.warning(get_text("⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.", st.session_state.language))
+        st.info(get_text("As a guest, you cannot use the AI assistant, save tasks, or view archives.", st.session_state.language))
 
 
     render_dashboard(current_user)
@@ -765,12 +794,13 @@ def check_routine_alerts(current_user):
 
 def render_routines(current_user):
     """Renders the Daily Routines and Punctuality tracker."""
+    lang = st.session_state.language
     if current_user == "guest":
-        st.info("Please log in to manage your daily routines and punctuality.")
+        st.info(get_text("Please log in to manage your daily routines and punctuality.", lang))
         return
 
-    st.header("⏱️ Daily Routines & Time Tracking")
-    st.markdown("Track your daily habits like morning walks, job hours, and personal time. Be punctual to earn a high productivity score!")
+    st.header(get_text("⏱️ Daily Routines & Time Tracking", lang))
+    st.markdown(get_text("Track your daily habits like morning walks, job hours, and personal time. Be punctual to earn a high productivity score!", lang))
     
     data = load_routines_data()
     if current_user not in data:
@@ -783,20 +813,20 @@ def render_routines(current_user):
     today_history = user_data["history"][today_str]
     
     # 1. Manage Routines Expander
-    with st.expander("⚙️ Manage Routine Timings", expanded=(len(user_data["settings"]) == 0)):
+    with st.expander(get_text("⚙️ Manage Routine Timings", lang), expanded=(len(user_data["settings"]) == 0)):
         with st.form("add_routine_form"):
-            r_name = st.text_input("Routine Name (e.g., Morning Walk, Job Duration, Evening Walk)")
+            r_name = st.text_input(get_text("Routine Name", lang))
             c1, c2 = st.columns(2)
-            r_start = c1.time_input("Expected Start Time (Check-In)")
-            r_end = c2.time_input("Expected End Time (Check-Out)")
+            r_start = c1.time_input(get_text("Expected Start Time", lang))
+            r_end = c2.time_input(get_text("Expected End Time", lang))
             
             days_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            active_days = st.multiselect("Active Days", options=days_options, default=days_options)
+            active_days = st.multiselect(get_text("Active Days", lang), options=days_options, default=days_options)
             
-            if st.form_submit_button("➕ Add Routine"):
+            if st.form_submit_button(get_text("➕ Add Routine", lang)):
                 if r_name.strip():
                     if not active_days:
-                        st.error("Please select at least one active day.")
+                        st.error(get_text("Please select at least one active day.", lang))
                     else:
                         user_data["settings"].append({
                             "id": str(uuid.uuid4())[:8], 
@@ -810,10 +840,10 @@ def render_routines(current_user):
                         st.success(f"Added routine: {r_name}")
                         st.rerun()
                 else:
-                    st.error("Please enter a routine name.")
+                    st.error(get_text("Please enter a routine name.", lang))
                     
         if user_data["settings"]:
-            st.markdown("**Your Defined Routines:**")
+            st.markdown(get_text("**Your Defined Routines:**", lang))
             for i, r in enumerate(user_data["settings"]):
                 col_del1, col_del2 = st.columns([0.9, 0.1])
                 
@@ -836,7 +866,7 @@ def render_routines(current_user):
 
     # 2. Today's Check-ins
     if user_data["settings"]:
-        st.subheader("📅 Today's Schedule & Punctuality")
+        st.subheader(get_text("📅 Today's Schedule & Punctuality", lang))
         
         current_day_name = datetime.now().strftime("%A")
         todays_routines = [
@@ -860,8 +890,8 @@ def render_routines(current_user):
                     # Check-in Logic
                     if not r_hist.get("check_in"):
                         if r_hist.get("ci_declined") or r_hist.get("ci_snoozes", 0) >= 3:
-                            col2.warning("Skipped")
-                            if col2.button("Check-In Anyway", key=f"ci_anyway_{rid}", use_container_width=True):
+                            col2.warning(get_text("Skipped", lang))
+                            if col2.button(get_text("Check-In Anyway", lang), key=f"ci_anyway_{rid}", use_container_width=True):
                                 r_hist["check_in"] = datetime.now().strftime("%H:%M")
                                 today_history[rid] = r_hist
                                 user_data["history"][today_str] = today_history
@@ -869,7 +899,7 @@ def render_routines(current_user):
                                 save_routines_data(data)
                                 st.rerun()
                         else:
-                            if col2.button("🟢 Check-In", key=f"ci_{rid}", use_container_width=True):
+                            if col2.button(get_text("🟢 Check-In", lang), key=f"ci_{rid}", use_container_width=True):
                                 r_hist["check_in"] = datetime.now().strftime("%H:%M")
                                 today_history[rid] = r_hist
                                 user_data["history"][today_str] = today_history
@@ -882,8 +912,8 @@ def render_routines(current_user):
                     # Check-out Logic
                     if r_hist.get("check_in") and not r_hist.get("check_out"):
                         if r_hist.get("co_declined") or r_hist.get("co_snoozes", 0) >= 3:
-                            col3.warning("Skipped")
-                            if col3.button("Check-Out Anyway", key=f"co_anyway_{rid}", use_container_width=True):
+                            col3.warning(get_text("Skipped", lang))
+                            if col3.button(get_text("Check-Out Anyway", lang), key=f"co_anyway_{rid}", use_container_width=True):
                                 r_hist["check_out"] = datetime.now().strftime("%H:%M")
                                 today_history[rid] = r_hist
                                 user_data["history"][today_str] = today_history
@@ -891,7 +921,7 @@ def render_routines(current_user):
                                 save_routines_data(data)
                                 st.rerun()
                         else:
-                            if col3.button("🔴 Check-Out", key=f"co_{rid}", use_container_width=True):
+                            if col3.button(get_text("🔴 Check-Out", lang), key=f"co_{rid}", use_container_width=True):
                                 r_hist["check_out"] = datetime.now().strftime("%H:%M")
                                 today_history[rid] = r_hist
                                 user_data["history"][today_str] = today_history
@@ -909,10 +939,10 @@ def render_routines(current_user):
                         diff_mins = (actual_start - expected_start).total_seconds() / 60
                         
                         if diff_mins <= 5: # 5 mins grace period (early is also perfect)
-                            col4.success("🌟 Perfect Punctuality!")
+                            col4.success(get_text("🌟 Perfect Punctuality!", lang))
                             punctuality_score += 100
                         elif diff_mins <= 15:
-                            col4.warning("👍 Good, but a bit late.")
+                            col4.warning(get_text("👍 Good, but a bit late.", lang))
                             punctuality_score += 50
                         else:
                             col4.error(f"⏰ {int(diff_mins)} mins late.")
@@ -926,21 +956,22 @@ def render_routines(current_user):
                 
                 if completed_routines == len(todays_routines):
                     if avg_punctuality >= 90:
-                        st.success("🏆 **Master of Routines!** You conquered the day with flawless punctuality. Productivity at its peak!")
+                        st.success(get_text("🏆 Master of Routines! You conquered the day with flawless punctuality.", lang))
                         st.balloons()
                     elif avg_punctuality >= 60:
-                        st.info("✅ **All routines completed!** Focus on hitting those start times perfectly tomorrow for Maximum Productivity.")
+                        st.info(get_text("✅ All routines completed! Focus on hitting start times perfectly tomorrow.", lang))
                     else:
-                        st.warning("✅ **All routines completed**, but try to be more mindful of your timings tomorrow. Consistency is key!")
+                        st.warning(get_text("✅ All routines completed, but try to be more mindful of timings tomorrow.", lang))
                 else:
                     st.info(f"Keep going! You have {len(todays_routines) - completed_routines} routines left today.")
         else:
-            st.info("🏖️ You don't have any routines scheduled for today. Enjoy your day off!")
+            st.info(get_text("🏖️ You don't have any routines scheduled for today. Enjoy your day off!", lang))
 
 def render_dashboard(current_user):
     """Renders the main dashboard, including metrics, table, and editor."""
     
     render_websocket_client()
+    lang = st.session_state.language
 
     SCHOOL_QUOTES = [
         "“The roots of education are bitter, but the fruit is sweet.” – Aristotle",
@@ -953,7 +984,7 @@ def render_dashboard(current_user):
     ]
     # Pick a rotating quote based on the day of the year
     daily_quote = SCHOOL_QUOTES[datetime.now().timetuple().tm_yday % len(SCHOOL_QUOTES)]
-    st.info(f"🎓 **Daily Motivation:** {daily_quote}")
+    st.info(f"{get_text('🎓 **Daily Motivation:**', lang)} {daily_quote}")
     
     required_cols_for_metrics = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
     df = pd.DataFrame(columns=required_cols_for_metrics)
@@ -964,21 +995,21 @@ def render_dashboard(current_user):
     # 1. Dashboard Metrics (Hide completely if guest or empty)
     if current_user != "guest" and not df.empty:
         m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Total", len(df))
-        m2.metric("Pending ⏳", len(df[df["Status"] == "Pending"]))
-        m3.metric("Working 🛠️", len(df[df["Status"] == "Working"]))
-        m4.metric("Done ✅", len(df[df["Status"] == "Done"]))
+        m1.metric(get_text("Total", lang), len(df))
+        m2.metric(get_text("Pending ⏳", lang), len(df[df["Status"] == "Pending"]))
+        m3.metric(get_text("Working 🛠️", lang), len(df[df["Status"] == "Working"]))
+        m4.metric(get_text("Done ✅", lang), len(df[df["Status"] == "Done"]))
         
         # Motivational Productivity Score
         score = (len(df[df["Status"] == "Done"]) / len(df)) * 100
-        m5.metric("Sprint Speed ⚡", f"{score:.0f}%")
+        m5.metric(get_text("Sprint Speed ⚡", lang), f"{score:.0f}%")
 
         # 2. Workload Health Notification
         pending_count = len(df[df["Status"] == "Pending"])
         if pending_count > 5:
-            st.warning(f"🚨 **High Workload Detected**: You have {pending_count} pending tasks. The AI suggests focusing on one High Priority task to regain momentum.")
+            st.warning(get_text("🚨 **High Workload Detected**: You have {0} pending tasks. The AI suggests focusing on one High Priority task to regain momentum.", lang).format(pending_count))
         elif pending_count == 0 and len(df) > 0:
-            st.success("🌟 **Peak Productivity**: All tasks are underway or completed. Great job!")
+            st.success(get_text("🌟 Peak Productivity: All tasks are underway or completed. Great job!", lang))
 
     # 2. Status Overview (Styled Table)
     display_df = df.copy()
@@ -997,13 +1028,13 @@ def render_dashboard(current_user):
                 if pd.notna(row.get("SharedWith")) and row.get("SharedWith"):
                     display_df.at[idx, "SharedWith"] = ", ".join([mask_mobile(s.strip()) for s in str(row["SharedWith"]).split(",") if s.strip()])
 
-        search_query = st.text_input("🔍 Search tasks (name, status, or priority):", "").lower()
+        search_query = st.text_input(get_text("🔍 Search tasks:", lang), "").lower()
         if search_query:
             display_df = display_df[display_df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)]
 
-        with st.expander("👀 Live Status Overview", expanded=True):
+        with st.expander(get_text("👀 Live Status Overview", lang), expanded=True):
             if current_user == "guest":
-                st.info("Please log in to view your live status overview.")
+                st.info(get_text("Please log in to view your live status overview.", lang))
             else:
                 st.data_editor(
                     display_df.style.apply(style_status, axis=1),
@@ -1015,24 +1046,24 @@ def render_dashboard(current_user):
                 )
         
         # Replace Task Distribution with Motivational Gamification System
-        with st.expander("🏆 Productivity Rank & Quick Wins", expanded=True):
+        with st.expander(get_text("🏆 Productivity Rank & Quick Wins", lang), expanded=True):
             if current_user == "guest":
-                st.info("Please log in to view your productivity rank and quick wins.")
+                st.info(get_text("Please log in to view your productivity rank and quick wins.", lang))
             elif not df.empty:
                 done_count = len(df[df["Status"] == "Done"])
                 total_count = len(df)
                 efficiency = (done_count / total_count) * 100
                 
                 # Determine Rank based on Efficiency
-                rank_title = "Rookie"
+                rank_title = get_text("Rookie", lang)
                 rank_icon = "🔰"
-                if efficiency >= 90: rank_title, rank_icon = "Elite Executioner", "👑"
-                elif efficiency >= 70: rank_title, rank_icon = "Productivity Pro", "🛡️"
-                elif efficiency >= 40: rank_title, rank_icon = "Busy Bee", "🐝"
+                if efficiency >= 90: rank_title, rank_icon = get_text("Elite Executioner", lang), "👑"
+                elif efficiency >= 70: rank_title, rank_icon = get_text("Productivity Pro", lang), "🛡️"
+                elif efficiency >= 40: rank_title, rank_icon = get_text("Busy Bee", lang), "🐝"
                 
                 c1, c2 = st.columns([1, 2])
                 c1.subheader(f"{rank_icon} {rank_title}")
-                c2.progress(efficiency / 100, text=f"Sprint Progress: {efficiency:.0f}%")
+                c2.progress(efficiency / 100, text=f"{get_text('Sprint Progress:', lang)} {efficiency:.0f}%")
                 
                 # Quick Win Motivation Logic
                 pending_tasks = df[df["Status"] == "Pending"]
@@ -1042,24 +1073,24 @@ def render_dashboard(current_user):
                     if quick_win.empty: quick_win = pending_tasks
                     
                     target_task = quick_win.iloc[0]["Task"]
-                    st.info(f"⚡ **Fast-Track Challenge**: Complete '{target_task}' in the next 15 mins to boost your momentum!")
+                    st.info(f"{get_text('⚡ Fast-Track Challenge:', lang)} '{target_task}' in the next 15 mins to boost your momentum!")
                 elif total_count > 0:
                     st.balloons()
-                    st.success("🎉 Board Cleared! You're working at light speed today. Time to celebrate!")
+                    st.success(get_text("🎉 Board Cleared! You're working at light speed today. Time to celebrate!", lang))
 
     check_routine_alerts(current_user)
 
-    tab_tasks, tab_routines = st.tabs(["📋 Tasks & AI Agent", "⏱️ Daily Routines & Punctuality"])
+    tab_tasks, tab_routines = st.tabs([get_text("📋 Tasks & AI Agent", st.session_state.language), get_text("⏱️ Daily Routines & Punctuality", st.session_state.language)])
     col1, col2 = tab_tasks.columns([1, 2])
 
     with col1:
-        st.subheader("📝 Task Editor")
+        st.subheader(get_text("📝 Task Editor", st.session_state.language))
         
         if current_user == "guest":
-            st.info("Please log in to view and edit your tasks.")
+            st.info(get_text("Please log in to view and edit your tasks.", lang))
 
         # Add a button to explicitly add a new task
-        if st.button("➕ Add New Task", use_container_width=True, disabled=(current_user == "guest")):
+        if st.button(get_text("➕ Add New Task", st.session_state.language), use_container_width=True, disabled=(current_user == "guest")):
             # Use the centralized tool function to handle locking and formatting correctly
             status_msg = tools.add_task(task="New task...", priority="High", owner=current_user)
             if "Success" not in status_msg:
@@ -1104,23 +1135,23 @@ def render_dashboard(current_user):
             df_editor,
             disabled=(current_user == "guest"),
             column_config={
-                "🗑️": st.column_config.CheckboxColumn("Delete?", default=False, width="small"),
+                "🗑️": st.column_config.CheckboxColumn(get_text("Delete?", lang), default=False, width="small"),
                 "👁️": st.column_config.CheckboxColumn("👁️", default=False, width="small", help="Reveal mobile numbers"),
                 "Status": st.column_config.SelectboxColumn(
-                    "Status",
+                    get_text("Status", lang),
                     options=["Pending", "Working", "Done"],
                     required=True,
                 ),
                 "Priority": st.column_config.SelectboxColumn(
-                    "Priority",
+                    get_text("Priority", lang),
                     options=["High", "Medium", "Low"],
                     required=True,
                 ),
-                "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", width="medium"),
-                "Task": st.column_config.TextColumn("Task", width="medium"),
-                "CompletedAt": st.column_config.DatetimeColumn("Completed At", disabled=True, width="small"),
-                "Owner": st.column_config.TextColumn("Owner", disabled=True),
-                "SharedWith": st.column_config.TextColumn("Shared With (Mobile #s)", help="Comma-separated mobile numbers", default=""),
+                "Date": st.column_config.DateColumn(get_text("Date", lang), format="YYYY-MM-DD", width="medium"),
+                "Task": st.column_config.TextColumn(get_text("Task", lang), width="medium"),
+                "CompletedAt": st.column_config.DatetimeColumn(get_text("Completed At", lang), disabled=True, width="small"),
+                "Owner": st.column_config.TextColumn(get_text("Owner", lang), disabled=True),
+                "SharedWith": st.column_config.TextColumn(get_text("Shared With (Mobile #s)", lang), help="Comma-separated mobile numbers", default=""),
             },
             num_rows="fixed", # Changed to fixed to prevent accidental row generation
             width='stretch',
@@ -1129,7 +1160,7 @@ def render_dashboard(current_user):
         )
 
         btn_col1, btn_col2 = st.columns(2)
-        if btn_col1.button("💾 Save Changes", use_container_width=True, disabled=(current_user == "guest")):
+        if btn_col1.button(get_text("💾 Save Changes", st.session_state.language), use_container_width=True, disabled=(current_user == "guest")):
             # 1. Filter out rows marked for deletion
             save_df = edited_df[edited_df["🗑️"] == False].drop(columns=["🗑️", "👁️"], errors='ignore')
             
@@ -1191,10 +1222,10 @@ def render_dashboard(current_user):
             final_df = pd.concat([others_tasks, save_df], ignore_index=True)
             final_df.to_csv(tools.TODO_FILE, index=False)
             broadcast_update()
-            st.success("Tasks saved and automatically sorted!")
+            st.success(get_text("Tasks saved and automatically sorted!", lang))
             st.rerun() # Rerun to reflect changes in the UI and metrics
             
-        if btn_col2.button("🗑️ Clear Done", use_container_width=True, disabled=(current_user == "guest")):
+        if btn_col2.button(get_text("🗑️ Clear Done", st.session_state.language), use_container_width=True, disabled=(current_user == "guest")):
             if os.path.exists(tools.TODO_FILE):
                 full_df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
                 # Ensure required columns exist to avoid KeyError: 'Owner'
@@ -1215,11 +1246,11 @@ def render_dashboard(current_user):
                 final_df.to_csv(tools.TODO_FILE, index=False)
                 broadcast_update()
             
-            st.toast("Completed tasks archived.")
+            st.toast(get_text("Completed tasks archived.", lang))
             st.rerun()
 
     with col2:
-        st.subheader("📊 Agent Execution")
+        st.subheader(get_text("📊 Agent Execution", st.session_state.language))
         
         # Initialize or load chat history from disk
         if "agent_history" not in st.session_state or st.session_state.current_user != st.session_state.get("last_loaded_user", None):
@@ -1229,7 +1260,7 @@ def render_dashboard(current_user):
             st.session_state.last_loaded_user = current_user
 
         if current_user == "guest":
-            st.info("Please log in to use the AI assistant.")
+            st.info(get_text("Please log in to use the AI assistant.", lang))
             
         # Display previous conversation
         chat_container = st.container(height=300, border=True)
@@ -1252,9 +1283,9 @@ def render_dashboard(current_user):
             sys.stdout = log_stream
             try:
                 with chat_container:
-                    with st.spinner("Assistant is thinking..."):
+                    with st.spinner(get_text("Assistant is thinking...", lang)):
                         report_content, updated_history = run_autonomous_agent(
-                            prompt, st.session_state.agent_history, user_id=current_user
+                            prompt, st.session_state.agent_history, user_id=current_user, language=st.session_state.language
                         )
                         st.session_state.agent_history = updated_history
                         broadcast_update()
@@ -1272,20 +1303,20 @@ def render_dashboard(current_user):
 
         prompt_clicked = None
         if current_user != "guest":
-            st.caption("💡 Quick Prompts:")
+            st.caption(get_text("💡 Quick Prompts:", lang))
             pc1, pc2 = st.columns(2)
-            if pc1.button("📊 Analyze workload", use_container_width=True): prompt_clicked = "Analyze my current workload"
-            if pc2.button("🎯 Suggest priorities", use_container_width=True): prompt_clicked = "Suggest priorities for today"
-            if pc1.button("🧩 Break down a task", use_container_width=True): prompt_clicked = "Break down a complex task"
-            if pc2.button("📝 Create daily summary", use_container_width=True): prompt_clicked = "Create a daily technical summary"
+            if pc1.button(get_text("📊 Analyze workload", lang), use_container_width=True): prompt_clicked = "Analyze my current workload"
+            if pc2.button(get_text("🎯 Suggest priorities", lang), use_container_width=True): prompt_clicked = "Suggest priorities for today"
+            if pc1.button(get_text("🧩 Break down a task", lang), use_container_width=True): prompt_clicked = "Break down a complex task"
+            if pc2.button(get_text("📝 Create daily summary", lang), use_container_width=True): prompt_clicked = "Create a daily technical summary"
 
-        user_command = st.chat_input("Ask your assistant...", disabled=(current_user == "guest"))
+        user_command = st.chat_input(get_text("Ask your assistant...", st.session_state.language), disabled=(current_user == "guest"))
         
         final_command = user_command or prompt_clicked
         
         if final_command:
             if current_user == "guest":
-                st.error("Please log in to use the AI assistant.")
+                st.error(get_text("Please log in to use the AI assistant.", lang))
             else:
                 # Forcefully uncheck previous messages by rendering fresh keys
                 st.session_state.checkbox_suffix = st.session_state.get("checkbox_suffix", 0) + 1
@@ -1322,10 +1353,10 @@ def render_dashboard(current_user):
 
         if st.session_state.chat_display:
             if current_user == "guest":
-                st.info("Please log in to archive or clear chat history.")
+                st.info(get_text("Please log in to use the AI assistant.", lang))
             else:
                 # Allow users to selectively save messages for future reference
-                if st.button("💾 Archive Selected Messages", use_container_width=True):
+                if st.button(get_text("💾 Archive Selected Messages", lang), use_container_width=True):
                     suffix = st.session_state.get("checkbox_suffix", 0)
                     selected_indices = [i for i, msg in enumerate(st.session_state.chat_display) if st.session_state.get(f"sel_{i}_{suffix}", False)]
                     
@@ -1353,9 +1384,9 @@ def render_dashboard(current_user):
                         else:
                             st.error(status_msg)
                     else:
-                        st.warning("No messages selected to archive.")
+                        st.warning(get_text("No messages selected to archive.", lang))
 
-                if st.button("🗑️ Clear Chat History", use_container_width=True):
+                if st.button(get_text("🗑️ Clear Chat History", lang), use_container_width=True):
                     st.session_state.agent_history = []
                     st.session_state.chat_display = []
                     # Reset keys since widgets are destroyed
@@ -1365,9 +1396,9 @@ def render_dashboard(current_user):
 
         # Persistent Log Viewer
         st.divider()
-        with st.expander("📖 View Persistent Archives", expanded=False):
+        with st.expander(get_text("📖 View Persistent Archives", lang), expanded=False):
             if current_user == "guest":
-                st.info("Please log in to view your archives.")
+                st.info(get_text("Please log in to view your archives.", lang))
             else:
                 archive_file_path = tools.get_archive_file_path(current_user)
                 if archive_file_path and os.path.exists(archive_file_path):
@@ -1376,7 +1407,7 @@ def render_dashboard(current_user):
                     
                     # Capture user edits from the text area
                     updated_archive = st.text_area(
-                        "Archived Reports (Edit directly and save)", 
+                        get_text("Archived Reports", lang), 
                         archive_content, 
                         height=400,
                         key="archive_content_editor"
@@ -1384,17 +1415,17 @@ def render_dashboard(current_user):
                     
                     # If changes are detected, show a Save button
                     if updated_archive != archive_content:
-                        if st.button("💾 Save Archive Changes", use_container_width=True):
+                        if st.button(get_text("💾 Save Archive Changes", lang), use_container_width=True):
                             with open(archive_file_path, "w", encoding="utf-8") as f:
                                 f.write(updated_archive)
-                            st.success("Archive updated successfully!")
+                            st.success(get_text("Archive updated successfully!", lang))
                             st.rerun()
                 else:
-                    st.info("No persistent archives found yet.")
+                    st.info(get_text("No persistent archives found yet.", lang))
 
         # Display the agent's internal logs/thinking from the LAST run if available
         if st.session_state.get("last_agent_log"):
-            with st.expander("🔍 View Agent Thinking Process", expanded=False):
+            with st.expander(get_text("🔍 View Agent Thinking Process", lang), expanded=False):
                 st.code(st.session_state.last_agent_log)
                 
     with tab_routines:

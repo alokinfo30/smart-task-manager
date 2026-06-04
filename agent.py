@@ -179,7 +179,7 @@ def normalize_history(history):
     return normalized
 
 
-def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "guest") -> tuple[str, list]:
+def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "guest", language: str = "English") -> tuple[str, list]:
     if not api_key or not client:
         return "Error: GOOGLE_API_KEY not found. Please set it to use the Agentic AI features.", history or []
 
@@ -218,8 +218,9 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
     def read_routines(*args, **kwargs):
         return tools.read_routines()
 
+    dynamic_instruction = SYSTEM_INSTRUCTION + f"\n11. Language: You MUST ALWAYS respond to the user in {language}."
     config = genai.types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION,
+        system_instruction=dynamic_instruction,
         tools=[
             read_todo_list,
             add_task,
