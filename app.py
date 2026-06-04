@@ -42,9 +42,6 @@ try:
 except ImportError:
     PDF_TOOLS_AVAILABLE = False
 
-from auth0_server_python.auth_server.server_client import ServerClient
-from auth0_server_python.auth_types import LogoutOptions, StartInteractiveLoginOptions, StateData, TransactionData
-from auth0_server_python.store.abstract import AbstractDataStore
 from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_chat_state, generate_learning_content, generate_tailored_resume
 import tools # Import the whole module to access context
 from auth import SessionManager, PasswordHandler, AuthenticationError, SECURITY_QUESTIONS
@@ -52,57 +49,25 @@ from translations import get_text
 
 load_dotenv()
 
-# --- Auth0 SDK Streamlit Store Implementation ---
-class FileDataStore(AbstractDataStore):
-    def __init__(self, secret, model, file_name):
-        super().__init__({"secret": secret})
-        self.model = model
-        self.file_name = file_name
+# --- Native Auth0 OAuth2 Implementation ---
+def get_auth0_login_url():
+    domain = os.getenv("AUTH0_DOMAIN", "")
+    client_id = os.getenv("AUTH0_CLIENT_ID", "")
+    redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": "openid profile email",
+        "state": uuid.uuid4().hex
+    }
+    return f"https://{domain}/authorize?" + urllib.parse.urlencode(params)
 
-    def _load(self):
-        if os.path.exists(self.file_name):
-            try:
-                with open(self.file_name, "r") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
-
-    def _save(self, data):
-        with open(self.file_name, "w") as f:
-            json.dump(data, f)
-
-    async def set(self, identifier, state, options=None, **_):
-        data = state.model_dump() if hasattr(state, "model_dump") else state
-        store = self._load()
-        store[identifier] = self.encrypt(identifier, data)
-        self._save(store)
-
-    async def get(self, identifier, options=None):
-        store = self._load()
-        encrypted = store.get(identifier)
-        if encrypted:
-            return self.model.model_validate(self.decrypt(identifier, encrypted))
-        return None
-
-    async def delete(self, identifier, options=None, **_):
-        store = self._load()
-        if identifier in store:
-            del store[identifier]
-            self._save(store)
-
-def get_auth0_client():
-    session_secret = os.getenv("AUTH0_SECRET", "0000000000000000000000000000000000000000000000000000000000000000")
-    return ServerClient(
-        domain=os.getenv("AUTH0_DOMAIN", ""),
-        client_id=os.getenv("AUTH0_CLIENT_ID", ""),
-        client_secret=os.getenv("AUTH0_CLIENT_SECRET", ""),
-        redirect_uri=os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/callback",
-        authorization_params={"scope": "openid profile email"},
-        secret=session_secret,
-        state_store=FileDataStore(session_secret, StateData, "auth0_sessions.json"),
-        transaction_store=FileDataStore(session_secret, TransactionData, "auth0_transactions.json"),
-    )
+def get_auth0_logout_url():
+    domain = os.getenv("AUTH0_DOMAIN", "")
+    client_id = os.getenv("AUTH0_CLIENT_ID", "")
+    return_to = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
+    return f"https://{domain}/v2/logout?client_id={client_id}&returnTo={urllib.parse.quote(return_to)}"
 
 # --- WebSocket Server for Real-Time Multiplayer Sync ---
 WS_PORT = 8765
@@ -302,29 +267,37 @@ def init_session_state():
         st.session_state.language = get_default_language()
     if "current_user" not in st.session_state:
         # 1. Check for Auth0 authorization code callback
-        if "code" in st.query_params and "state" in st.query_params:
-            auth0 = get_auth0_client()
-            app_base = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
-            q_params = urllib.parse.urlencode(st.query_params)
-            req_url = f"{app_base}/callback?{q_params}"
+        if "code" in st.query_params:
+            code = st.query_params.get("code")
+            domain = os.getenv("AUTH0_DOMAIN", "")
+            client_id = os.getenv("AUTH0_CLIENT_ID", "")
+            client_secret = os.getenv("AUTH0_CLIENT_SECRET", "")
+            redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
             
-            if os.getenv("AUTH0_DOMAIN"):
+            if domain and client_id and client_secret:
                 try:
-                    async def process_auth0_login():
-                        await auth0.complete_interactive_login(
-                            url=req_url, 
-                            store_options={"query_params": st.query_params}
-                        )
-                        return await auth0.get_user(store_options={})
-                        
-                    user_info = asyncio.run(process_auth0_login())
-                    if user_info:
-                        user_id = user_info.get("email") or user_info.get("nickname") or user_info.get("sub")
-                        if user_id:
-                            st.session_state.current_user = user_id
-                            st.session_state.auth_method = "Auth0 SSO"
-                            st.query_params.clear() # type: ignore
-                            return
+                    token_url = f"https://{domain}/oauth/token"
+                    payload = {
+                        "grant_type": "authorization_code",
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "code": code,
+                        "redirect_uri": redirect_uri
+                    }
+                    res = requests.post(token_url, json=payload)
+                    if res.status_code == 200:
+                        access_token = res.json().get("access_token")
+                        user_url = f"https://{domain}/userinfo"
+                        headers = {"Authorization": f"Bearer {access_token}"}
+                        user_res = requests.get(user_url, headers=headers)
+                        if user_res.status_code == 200:
+                            user_info = user_res.json()
+                            user_id = user_info.get("email") or user_info.get("nickname") or user_info.get("sub")
+                            if user_id:
+                                st.session_state.current_user = user_id
+                                st.session_state.auth_method = "Auth0 SSO"
+                                st.query_params.clear() # type: ignore
+                                return
                 except Exception as e:
                     print(f"Auth0 SSO Error: {e}")
 
@@ -478,11 +451,7 @@ def render_auth_ui():
         st.sidebar.subheader(get_text("🌐 Login with Email / Social", lang))
         
         if os.getenv("AUTH0_DOMAIN") and os.getenv("AUTH0_CLIENT_ID"):
-            auth0 = get_auth0_client()
-            auth_url = asyncio.run(auth0.start_interactive_login(
-                options=StartInteractiveLoginOptions(),
-                store_options={}
-            ))
+            auth_url = get_auth0_login_url()
             st.sidebar.markdown(f'<a href="{auth_url}" target="_self"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">{get_text("Continue with Email / Social", lang)}</button></a>', unsafe_allow_html=True)
             st.sidebar.caption(get_text("Secure Login", lang))
         else:
@@ -568,11 +537,7 @@ def render_auth_ui():
                 SessionManager.clear_session(token)
                 
             if st.session_state.auth_method == "Auth0 SSO":
-                auth0 = get_auth0_client()
-                logout_url = asyncio.run(auth0.logout(
-                    options=LogoutOptions(return_to=os.getenv("APP_BASE_URL", "http://localhost:8501")),
-                    store_options={}
-                ))
+                logout_url = get_auth0_logout_url()
                 st.session_state.current_user = "guest"
                 st.session_state.auth_method = None
                 st.query_params.clear() # type: ignore

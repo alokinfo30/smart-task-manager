@@ -12,6 +12,18 @@
       "content": "⏳ **Rate Limit Reached**: You are moving too fast for the free tier! Please wait about 60 seconds for your quota to reset and try again.",
       "timestamp": "2026-06-04T19:46:44.495850",
       "archived": false
+    },
+    {
+      "role": "user",
+      "content": "Break down a complex task",
+      "timestamp": "2026-06-04T23:58:21.044711",
+      "archived": false
+    },
+    {
+      "role": "assistant",
+      "content": "Error: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemma-2-27b-it is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+      "timestamp": "2026-06-04T23:58:22.354934",
+      "archived": false
     }
   ]
 }

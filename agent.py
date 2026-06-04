@@ -294,19 +294,13 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
             last_error = e
             error_text = str(e)
             print(f"Model {model_name} failed: {error_text}")
-            if "RESOURCE_EXHAUSTED" in error_text or "quota" in error_text.lower():
-                return (
-                    "⏳ **Rate Limit Reached**: You are moving too fast for the free tier! "
-                    "Please wait about 60 seconds for your quota to reset and try again.",
-                    history or [],
-                )
-            if "not found" in error_text.lower() or "unsupported" in error_text.lower():
-                continue
-            break
+            continue
 
-    # If the model was unavailable due to high demand, attempt a safe fallback:
+    # If all models failed, return the clearest error possible
     if last_error:
         le = str(last_error)
+        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le:
+            return f"⏳ **API Quota Exceeded**: Google API limit reached. You may have hit the daily free tier limit (1,500 req/day), or your API key's project requires billing setup.\n\n*Detailed Error*: `{le}`", history or []
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments.", history or []
     return f"Error: {str(last_error)}", history or []
@@ -356,16 +350,12 @@ def generate_learning_content(topic_or_jd: str, language: str = "English") -> st
         except Exception as e:
             last_error = e
             print(f"Model {model_name} failed for learning content: {e}")
-            
-            error_text = str(e)
-            if "RESOURCE_EXHAUSTED" in error_text or "quota" in error_text.lower():
-                return "⏳ **Rate Limit Reached**: You are moving too fast for the free tier! Please wait about 60 seconds for your quota to reset and try again."
-            if "not found" in error_text.lower() or "unsupported" in error_text.lower():
-                continue
-            break
+            continue
             
     if last_error:
         le = str(last_error)
+        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le:
+            return f"⏳ **API Quota Exceeded**: Google API limit reached. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`"
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
         return f"Failed to generate learning content. Error: {le}"
@@ -407,16 +397,12 @@ def generate_tailored_resume(user_info: str, job_desc: str, language: str = "Eng
         except Exception as e:
             last_error = e
             print(f"Model {model_name} failed for tailored resume: {e}")
-            
-            error_text = str(e)
-            if "RESOURCE_EXHAUSTED" in error_text or "quota" in error_text.lower():
-                return "⏳ **Rate Limit Reached**: You are moving too fast for the free tier! Please wait about 60 seconds for your quota to reset and try again."
-            if "not found" in error_text.lower() or "unsupported" in error_text.lower():
-                continue
-            break
+            continue
             
     if last_error:
         le = str(last_error)
+        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le:
+            return f"⏳ **API Quota Exceeded**: Google API limit reached. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`"
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
         return f"Failed to generate tailored resume. Error: {le}"
