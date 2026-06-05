@@ -15,7 +15,7 @@ except ImportError:
 load_dotenv()
 
 # Gemini Flash models are available completely FREE of cost on the Google AI Studio Free Tier
-MODEL_FALLBACKS = ["gemini-2.0-flash", "gemini-1.5-flash"]
+MODEL_FALLBACKS = ["gemini-2.0-flash"]
 OFFLINE_MODEL = os.getenv("OFFLINE_MODEL", "llama3.2")
 
 # Configure AI client
@@ -310,17 +310,24 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
                     print(f"Falling back to local offline model: {OFFLINE_MODEL}...")
                     ollama_msgs = [{"role": "system", "content": dynamic_instruction + "\n[SYSTEM NOTICE: You are running in OFFLINE FALLBACK MODE because the primary API quota is exhausted. You CANNOT execute tools (add_task, delete_task, etc.) right now. Provide helpful advice or conversational responses instead.]"}]
                     for m in messages:
-                        role = "assistant" if m.role == "model" else m.role
-                        text = m.parts[0].text if getattr(m, 'parts', None) else ""
-                        ollama_msgs.append({"role": role, "content": text})
+                        role = "assistant" if getattr(m, "role", "") == "model" else getattr(m, "role", "user")
+                        text = ""
+                        if getattr(m, 'parts', None):
+                            for p in m.parts:
+                                if getattr(p, 'text', None):
+                                    text += p.text + "\n"
+                        if text.strip():
+                            ollama_msgs.append({"role": role, "content": text.strip()})
                     ollama_msgs.append({"role": "user", "content": prompt})
                     
                     response = ollama.chat(model=OFFLINE_MODEL, messages=ollama_msgs)
                     return response['message']['content'], history or []
                 except Exception as ollama_err:
                     print(f"Offline fallback failed: {ollama_err}")
-                    
-            return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `{le}`", history or []
+                    return f"⏳ **Offline Fallback Failed**: The Google API limit was reached, but the local offline model ('{OFFLINE_MODEL}') also failed. Ensure Ollama is running.\n\n*Ollama Error*: `{ollama_err}`\n\n*Original API Error*: `{le}`", history or []
+            else:
+                return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*", history or []
+                
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments.", history or []
     return f"Error: {str(last_error)}", history or []
@@ -382,7 +389,9 @@ def generate_learning_content(topic_or_jd: str, language: str = "English") -> st
                     return response['message']['content']
                 except Exception as e:
                     print(f"Offline fallback failed: {e}")
-            return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`"
+                    return f"⏳ **Offline Fallback Failed**: Ensure Ollama is running.\n*Ollama Error*: `{e}`\n\n*Original API Error*: `{le}`"
+            else:
+                return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*"
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
         return f"Failed to generate learning content. Error: {le}"
@@ -436,7 +445,9 @@ def generate_tailored_resume(user_info: str, job_desc: str, language: str = "Eng
                     return response['message']['content']
                 except Exception as e:
                     print(f"Offline fallback failed: {e}")
-            return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`"
+                    return f"⏳ **Offline Fallback Failed**: Ensure Ollama is running.\n*Ollama Error*: `{e}`\n\n*Original API Error*: `{le}`"
+            else:
+                return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*"
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
         return f"Failed to generate tailored resume. Error: {le}"

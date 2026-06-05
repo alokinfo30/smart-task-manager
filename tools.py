@@ -101,7 +101,10 @@ def add_task(task: str = "test task", priority: str = "High", date: str = None, 
         db = PasswordDB.load()
         accounts = [acc.strip() for acc in shared_with_accounts.split(",") if acc.strip()]
         valid_accounts = []
+        current_user = owner if owner else get_current_user()
         for acc in accounts:
+            if acc == current_user:
+                return f"Error: You cannot share a task with yourself ({acc})."
             if "@" not in acc and acc not in db:
                 return f"Error: Account '{acc}' does not exist."
             valid_accounts.append(acc)
@@ -205,7 +208,10 @@ def update_task(task_identifier: str, updates: dict, owner: str = None) -> str:
         if "SharedWith" in updates:
             db = PasswordDB.load()
             accounts = [s.strip() for s in str(updates["SharedWith"]).split(',') if s.strip()]
+            current_user = owner if owner else get_current_user()
             for acc in accounts:
+                if acc == current_user:
+                    return f"Error: You cannot share a task with yourself ({acc})."
                 if "@" not in acc and acc not in db:
                     return f"Error: Account '{acc}' does not exist."
             updates["SharedWith"] = ",".join(accounts)
