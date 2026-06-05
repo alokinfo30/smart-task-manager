@@ -44,6 +44,12 @@
         "1deb74ec": {
           "ci_notified_0": true
         }
+      },
+      "2026-06-05": {
+        "1deb74ec": {
+          "ci_notified_0": true,
+          "check_in": "06:01"
+        }
       }
     }
   }

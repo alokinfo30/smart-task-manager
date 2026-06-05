@@ -6,10 +6,17 @@ import tools
 from datetime import datetime
 import json
 
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+
 load_dotenv()
 
 # Gemini Flash models are available completely FREE of cost on the Google AI Studio Free Tier
-MODEL_FALLBACKS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemma-2-27b-it"]
+MODEL_FALLBACKS = ["gemini-2.0-flash", "gemini-1.5-flash"]
+OFFLINE_MODEL = os.getenv("OFFLINE_MODEL", "llama3.2")
 
 # Configure AI client
 # Ensure GOOGLE_API_KEY is set in your environment variables
@@ -31,16 +38,16 @@ Capabilities:
 4. Break down complex tasks into smaller, actionable sub-steps.
 5. Maintain a professional, encouraging, and organized tone.
 6. Use the 'log_report' tool whenever you generate a detailed analysis, summary, or when the user asks to 'save' a response.
-7. When adding a task, only ask the user for the task name. You must automatically set the priority to 'High' and the date to the current date (today) when calling the 'add_task' tool. You can also specify a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument if the user wants to share the task with specific individuals.
+7. When adding a task, only ask the user for the task name. You must automatically set the priority to 'High' and the date to the current date (today) when calling the 'add_task' tool. You can also specify a comma-separated list of user accounts (mobile numbers or emails) in the 'shared_with_accounts' argument if the user wants to share the task with specific individuals.
 8. Manage and analyze the user's daily and monthly finances using the 'add_expense', 'read_expenses', and 'delete_expense' tools when requested.
 9. Generate learning materials on any topic or from a job description using the 'generate_lesson' tool.
 10. Create a tailored resume using the 'create_resume' tool when the user provides their details and a job description.
 11. Motivation & Strategy: Encourage users to improve their 'Sprint Speed' and reach 'Elite Executioner' rank by completing tasks quickly. Provide positive reinforcement. ALWAYS suggest the best strategic plan based on their pending tasks and daily routines to help them achieve peak productivity and become the best version of themselves.
-12. Privacy Rules: You can see your tasks and tasks explicitly shared with your mobile number. You can modify tasks you own or tasks that are explicitly shared with your mobile number.
-   If a user asks to share a task, use the 'add_task' tool and provide a comma-separated list of mobile numbers in the 'shared_with_mobiles' argument.
+12. Privacy Rules: You can see your tasks and tasks explicitly shared with your account. You can modify tasks you own or tasks that are explicitly shared with your account.
+   If a user asks to share a task, use the 'add_task' tool and provide a comma-separated list of user accounts in the 'shared_with_accounts' argument.
    If a user asks to change a task's date, priority, or description, use the 'update_task' tool with the 'updates' dictionary.
    Do not use a boolean 'shared' argument.
-13. Security: Never display full mobile numbers (e.g. 9876543210) in your chat responses. Always mask them for privacy (e.g. 98******10).
+13. Security: Never display full mobile numbers or emails in your chat responses. Always mask them for privacy (e.g. 98******10).
 
 When asked to 'Analyze', 'Report', or suggest a strategy, use 'read_todo_list' and 'read_routines' first, then provide a structured breakdown with priorities, workload warnings if necessary, and an optimized daily plan.
 Today's Date: {today}
@@ -146,14 +153,13 @@ def extract_response_text(response):
     
     return "".join(texts).strip()
 
-
 def normalize_history(history):
-    """Convert history entries to genai.types.Content objects with 'model' role for Gemma."""
+    """Convert history entries to genai.types.Content objects with 'model' role."""
     normalized = []
     for item in history or []:
         if isinstance(item, dict):
             role = item.get("role")
-            # Gemma models use 'model' instead of 'assistant'
+            # Gemini models use 'model' instead of 'assistant'
             if role == "assistant":
                 role = "model"
 
@@ -181,7 +187,6 @@ def normalize_history(history):
             continue
     return normalized
 
-
 def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "guest", language: str = "English") -> tuple[str, list]:
     if not api_key or not client:
         return "Error: GOOGLE_API_KEY not found. Please set it to use the Agentic AI features.", history or []
@@ -203,8 +208,8 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
     def read_todo_list(*args, **kwargs):
         return tools.read_todo_list()
 
-    def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_mobiles: str = "", **kwargs):
-        return tools.add_task(task=task, priority=priority, date=date, shared_with_mobiles=shared_with_mobiles, owner=user_id)
+    def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_accounts: str = "", **kwargs):
+        return tools.add_task(task=task, priority=priority, date=date, shared_with_accounts=shared_with_accounts, owner=user_id)
 
     def delete_task(task_identifier: str, **kwargs):
         return tools.delete_task(task_identifier, owner=user_id)
@@ -299,8 +304,23 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
     # If all models failed, return the clearest error possible
     if last_error:
         le = str(last_error)
-        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le:
-            return f"⏳ **API Quota Exceeded**: Google API limit reached. You may have hit the daily free tier limit (1,500 req/day), or your API key's project requires billing setup.\n\n*Detailed Error*: `{le}`", history or []
+        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le or "404" in le or "NOT_FOUND" in le:
+            if OLLAMA_AVAILABLE:
+                try:
+                    print(f"Falling back to local offline model: {OFFLINE_MODEL}...")
+                    ollama_msgs = [{"role": "system", "content": dynamic_instruction + "\n[SYSTEM NOTICE: You are running in OFFLINE FALLBACK MODE because the primary API quota is exhausted. You CANNOT execute tools (add_task, delete_task, etc.) right now. Provide helpful advice or conversational responses instead.]"}]
+                    for m in messages:
+                        role = "assistant" if m.role == "model" else m.role
+                        text = m.parts[0].text if getattr(m, 'parts', None) else ""
+                        ollama_msgs.append({"role": role, "content": text})
+                    ollama_msgs.append({"role": "user", "content": prompt})
+                    
+                    response = ollama.chat(model=OFFLINE_MODEL, messages=ollama_msgs)
+                    return response['message']['content'], history or []
+                except Exception as ollama_err:
+                    print(f"Offline fallback failed: {ollama_err}")
+                    
+            return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `{le}`", history or []
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments.", history or []
     return f"Error: {str(last_error)}", history or []
@@ -354,8 +374,15 @@ def generate_learning_content(topic_or_jd: str, language: str = "English") -> st
             
     if last_error:
         le = str(last_error)
-        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le:
-            return f"⏳ **API Quota Exceeded**: Google API limit reached. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`"
+        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le or "404" in le or "NOT_FOUND" in le:
+            if OLLAMA_AVAILABLE:
+                try:
+                    print(f"Falling back to local offline model: {OFFLINE_MODEL}...")
+                    response = ollama.chat(model=OFFLINE_MODEL, messages=[{"role": "user", "content": prompt}])
+                    return response['message']['content']
+                except Exception as e:
+                    print(f"Offline fallback failed: {e}")
+            return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`"
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
         return f"Failed to generate learning content. Error: {le}"
@@ -401,8 +428,15 @@ def generate_tailored_resume(user_info: str, job_desc: str, language: str = "Eng
             
     if last_error:
         le = str(last_error)
-        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le:
-            return f"⏳ **API Quota Exceeded**: Google API limit reached. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`"
+        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le or "404" in le or "NOT_FOUND" in le:
+            if OLLAMA_AVAILABLE:
+                try:
+                    print(f"Falling back to local offline model: {OFFLINE_MODEL}...")
+                    response = ollama.chat(model=OFFLINE_MODEL, messages=[{"role": "user", "content": prompt}])
+                    return response['message']['content']
+                except Exception as e:
+                    print(f"Offline fallback failed: {e}")
+            return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`"
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
             return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
         return f"Failed to generate tailored resume. Error: {le}"

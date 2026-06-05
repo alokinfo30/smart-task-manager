@@ -19,4 +19,4 @@ try:
 except Exception as e:
     print(f"Error: {e}")
 
-print("\nNote: Use the full string (e.g., 'models/gemma-4-31b-it') or just the suffix (e.g., 'gemma-4-31b-it').")
+print("\nNote: Use the full string (e.g., 'models/gemini-1.5-flash-8b') or just the suffix (e.g., 'gemini-1.5-flash-8b').")

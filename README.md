@@ -55,7 +55,7 @@ Make sure to install the required PDF dependencies to use the Resume generation 
 
 - **Frontend & Web Framework**: Streamlit
 - **Programming Language**: Python 3
-- **Artificial Intelligence**: Google Generative AI SDK (Gemini 1.5 Flash, Gemini 2.0 Flash, Gemma)
+- **Artificial Intelligence**: Google Generative AI SDK (Gemini 1.5 Flash, Gemini 2.0 Flash, Gemini 1.5 Flash-8B)
 - **Authentication**: Auth0 SDK & Custom PBKDF2 Hashing
 - **Real-Time Communication**: `websockets` & `asyncio`
 - **Data Manipulation**: `pandas`

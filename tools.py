@@ -5,6 +5,7 @@ import pandas as pd # Required for delete_task
 import csv
 import threading
 import json
+from auth import PasswordDB
 
 # Constants for file paths (could be moved to .env)
 TODO_FILE = os.getenv("TODO_FILE_PATH", "todo.txt")
@@ -85,7 +86,7 @@ def read_routines() -> str:
     except Exception as e:
         return f"Error reading routines: {str(e)}"
 
-def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_mobiles: str = "", owner: str = None) -> str:
+def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_accounts: str = "", owner: str = None) -> str:
     """
     Appends a new task to the todo list.
     
@@ -93,9 +94,19 @@ def add_task(task: str = "test task", priority: str = "High", date: str = None, 
         task: A clear description of the task.
         priority: The urgency level. Defaults to 'High'. Always use 'High' for new tasks.
         date: The scheduled date in YYYY-MM-DD format. Defaults to current date if not provided.
-        shared_with_mobiles: Comma-separated mobile numbers of users to share this task with.
+        shared_with_accounts: Comma-separated user accounts (mobile/email) to share this task with.
     Returns a success message or error string.
     """
+    if shared_with_accounts:
+        db = PasswordDB.load()
+        accounts = [acc.strip() for acc in shared_with_accounts.split(",") if acc.strip()]
+        valid_accounts = []
+        for acc in accounts:
+            if "@" not in acc and acc not in db:
+                return f"Error: Account '{acc}' does not exist."
+            valid_accounts.append(acc)
+        shared_with_accounts = ",".join(valid_accounts)
+
     if not date:
         date = datetime.date.today().strftime("%Y-%m-%d")
     try:
@@ -115,7 +126,7 @@ def add_task(task: str = "test task", priority: str = "High", date: str = None, 
                     "Priority": priority,
                     "CompletedAt": "",
                     "Owner": owner if owner else get_current_user(),
-                    "SharedWith": shared_with_mobiles
+                    "SharedWith": shared_with_accounts
                 })
         return f"Success: Task '{task}' added successfully."
     except Exception as e:
@@ -190,6 +201,15 @@ def update_task(task_identifier: str, updates: dict, owner: str = None) -> str:
         
         # Allowed fields for update
         allowed_fields = ["Date", "Task", "Status", "Priority", "SharedWith"]
+        
+        if "SharedWith" in updates:
+            db = PasswordDB.load()
+            accounts = [s.strip() for s in str(updates["SharedWith"]).split(',') if s.strip()]
+            for acc in accounts:
+                if "@" not in acc and acc not in db:
+                    return f"Error: Account '{acc}' does not exist."
+            updates["SharedWith"] = ",".join(accounts)
+
         for field, value in updates.items():
             if field in allowed_fields:
                 df.loc[mask, field] = value
