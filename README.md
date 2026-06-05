@@ -126,6 +126,14 @@ To see how many users are visiting your app, where they are from, and what featu
 
 This application is designed to be compatible with both local development (e.g., `http://localhost:8501`) and a live production server (e.g., `https://staskma.streamlit.app/`). The configuration is managed through environment variables.
 
+Note on Server-Side Production:
+If your goal was to automatically install Ollama on the production server (e.g., an AWS EC2 or DigitalOcean Linux VPS) rather than the end-user's PC, you should run this command on your server's terminal once before starting Streamlit:
+
+bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve &
+ollama pull llama3.2
+
 ### Environment Variable Configuration
 
 #### 1. Development (Local Machine)

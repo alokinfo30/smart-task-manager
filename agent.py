@@ -15,7 +15,14 @@ except ImportError:
 load_dotenv()
 
 # Gemini Flash models are available completely FREE of cost on the Google AI Studio Free Tier
-MODEL_FALLBACKS = ["gemini-2.0-flash"]
+MODEL_FALLBACKS = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro-latest",
+    "gemma-2-27b-it",
+    "gemma-2-9b-it"
+]
 OFFLINE_MODEL = os.getenv("OFFLINE_MODEL", "llama3.2")
 
 # Configure AI client
@@ -324,7 +331,8 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
                     return response['message']['content'], history or []
                 except Exception as ollama_err:
                     print(f"Offline fallback failed: {ollama_err}")
-                    return f"⏳ **Offline Fallback Failed**: The Google API limit was reached, but the local offline model ('{OFFLINE_MODEL}') also failed. Ensure Ollama is running.\n\n*Ollama Error*: `{ollama_err}`\n\n*Original API Error*: `{le}`", history or []
+                    hint = f"\n\n*(Hint: Open your terminal and run `ollama pull {OFFLINE_MODEL}` to download the model)*" if "not found" in str(ollama_err).lower() else ""
+                    return f"⏳ **Offline Fallback Failed**: The Google API limit was reached, but the local offline model ('{OFFLINE_MODEL}') also failed. Ensure Ollama is running.{hint}\n\n*Ollama Error*: `{ollama_err}`\n\n*Original API Error*: `{le}`", history or []
             else:
                 return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*", history or []
                 
@@ -389,7 +397,8 @@ def generate_learning_content(topic_or_jd: str, language: str = "English") -> st
                     return response['message']['content']
                 except Exception as e:
                     print(f"Offline fallback failed: {e}")
-                    return f"⏳ **Offline Fallback Failed**: Ensure Ollama is running.\n*Ollama Error*: `{e}`\n\n*Original API Error*: `{le}`"
+                    hint = f"\n\n*(Hint: Open your terminal and run `ollama pull {OFFLINE_MODEL}` to download the model)*" if "not found" in str(e).lower() else ""
+                    return f"⏳ **Offline Fallback Failed**: Ensure Ollama is running.{hint}\n*Ollama Error*: `{e}`\n\n*Original API Error*: `{le}`"
             else:
                 return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*"
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
@@ -445,7 +454,8 @@ def generate_tailored_resume(user_info: str, job_desc: str, language: str = "Eng
                     return response['message']['content']
                 except Exception as e:
                     print(f"Offline fallback failed: {e}")
-                    return f"⏳ **Offline Fallback Failed**: Ensure Ollama is running.\n*Ollama Error*: `{e}`\n\n*Original API Error*: `{le}`"
+                    hint = f"\n\n*(Hint: Open your terminal and run `ollama pull {OFFLINE_MODEL}` to download the model)*" if "not found" in str(e).lower() else ""
+                    return f"⏳ **Offline Fallback Failed**: Ensure Ollama is running.{hint}\n*Ollama Error*: `{e}`\n\n*Original API Error*: `{le}`"
             else:
                 return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*"
         if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):

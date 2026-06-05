@@ -60,6 +60,42 @@
       "content": "⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}`",
       "timestamp": "2026-06-05T07:13:35.098768",
       "archived": false
+    },
+    {
+      "role": "user",
+      "content": "Suggest priorities for today",
+      "timestamp": "2026-06-05T07:19:08.425782",
+      "archived": false
+    },
+    {
+      "role": "assistant",
+      "content": "⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}`",
+      "timestamp": "2026-06-05T07:19:09.651285",
+      "archived": false
+    },
+    {
+      "role": "user",
+      "content": "Analyze my current workload",
+      "timestamp": "2026-06-05T07:23:45.930286",
+      "archived": false
+    },
+    {
+      "role": "assistant",
+      "content": "⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}`",
+      "timestamp": "2026-06-05T07:23:46.792248",
+      "archived": false
+    },
+    {
+      "role": "user",
+      "content": "Suggest priorities for today",
+      "timestamp": "2026-06-05T07:26:42.995256",
+      "archived": false
+    },
+    {
+      "role": "assistant",
+      "content": "⏳ **Offline Fallback Failed**: The Google API limit was reached, but the local offline model ('llama3.2') also failed. Ensure Ollama is running.\n\n*Ollama Error*: `model 'llama3.2' not found (status code: 404)`\n\n*Original API Error*: `404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemma-2-9b-it is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}`",
+      "timestamp": "2026-06-05T07:26:45.040039",
+      "archived": false
     }
   ]
 }

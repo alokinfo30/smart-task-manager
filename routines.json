@@ -48,7 +48,9 @@
       "2026-06-05": {
         "1deb74ec": {
           "ci_notified_0": true,
-          "check_in": "06:01"
+          "check_in": "06:01",
+          "co_notified_0": true,
+          "check_out": "07:23"
         }
       }
     }

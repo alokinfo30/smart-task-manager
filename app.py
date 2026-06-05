@@ -582,6 +582,33 @@ def render_auth_ui():
             """.replace('__WS_HOST__', WS_HOST).replace('__WS_PORT__', str(WS_PORT)).replace('__CURRENT_USER__', st.session_state.current_user)
             components.html(wasm_html, height=350, scrolling=True)
 
+        # --- Desktop Offline AI (Ollama) Status ---
+        st.sidebar.divider()
+        st.sidebar.subheader("🖥️ Desktop Offline AI")
+        
+        ollama_running = False
+        model_downloaded = False
+        offline_model_name = os.getenv("OFFLINE_MODEL", "llama3.2")
+        
+        try:
+            res = requests.get("http://127.0.0.1:11434/api/tags", timeout=1.0)
+            if res.status_code == 200:
+                ollama_running = True
+                models = [m.get("name") for m in res.json().get("models", [])]
+                if any(offline_model_name in m for m in models):
+                    model_downloaded = True
+        except Exception:
+            pass
+            
+        if ollama_running and model_downloaded:
+            st.sidebar.success(f"🟢 Ollama is running and **{offline_model_name}** is ready!")
+        elif ollama_running and not model_downloaded:
+            st.sidebar.warning(f"⚠️ Ollama is running, but the model is missing.\n\nRun this in your terminal:\n`ollama pull {offline_model_name}`")
+        else:
+            st.sidebar.info("For the backend agent to work offline, you must install and run Ollama.")
+            st.sidebar.markdown('<a href="https://ollama.com/download" target="_blank"><button style="width:100%; padding:0.5rem; background-color:#2a2a2a; color:white; border:none; border-radius:4px; cursor:pointer;">📥 Download Ollama</button></a>', unsafe_allow_html=True)
+        st.sidebar.divider()
+
         with col_reg:
             if st.button(get_text("📝 Register", lang), width="stretch"):
                 st.session_state.show_reg_form = True
@@ -1529,27 +1556,20 @@ def render_dashboard(current_user):
             prompt = st.session_state.pending_agent_prompt
             del st.session_state.pending_agent_prompt
             
-            log_stream = StringIO()
-            old_stdout = sys.stdout
-            sys.stdout = log_stream
-            try:
-                with chat_container:
-                    with st.spinner(get_text("Assistant is thinking...", lang)):
-                        report_content, updated_history = run_autonomous_agent(
-                            prompt, st.session_state.agent_history, user_id=current_user, language=st.session_state.language
-                        )
-                        st.session_state.agent_history = updated_history
-                        broadcast_update()
-                        st.session_state.chat_display.append({
-                            "role": "assistant", 
-                            "content": report_content,
-                            "timestamp": datetime.now().isoformat(),
-                            "archived": False
-                        })
-                        save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
-            finally:
-                sys.stdout = old_stdout
-            st.session_state.last_agent_log = log_stream.getvalue()
+            with chat_container:
+                with st.spinner(get_text("Assistant is thinking...", lang)):
+                    report_content, updated_history = run_autonomous_agent(
+                        prompt, st.session_state.agent_history, user_id=current_user, language=st.session_state.language
+                    )
+                    st.session_state.agent_history = updated_history
+                    broadcast_update()
+                    st.session_state.chat_display.append({
+                        "role": "assistant", 
+                        "content": report_content,
+                        "timestamp": datetime.now().isoformat(),
+                        "archived": False
+                    })
+                    save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
             st.rerun()
 
         prompt_clicked = None
@@ -1674,11 +1694,6 @@ def render_dashboard(current_user):
                 else:
                     st.info(get_text("No persistent archives found yet.", lang))
 
-        # Display the agent's internal logs/thinking from the LAST run if available
-        if st.session_state.get("last_agent_log"):
-            with st.expander(get_text("🔍 View Agent Thinking Process", lang), expanded=False):
-                st.code(st.session_state.last_agent_log)
-                
     with tab_routines:
         render_routines(current_user)
         
