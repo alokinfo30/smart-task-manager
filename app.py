@@ -30,6 +30,9 @@ import smtplib
 from email.message import EmailMessage
 import requests
 import urllib.parse
+import base64
+import hashlib
+import secrets
 try:
     from PyPDF2 import PdfReader
     from fpdf import FPDF
@@ -76,12 +79,24 @@ def get_auth0_login_url():
     domain = os.getenv("AUTH0_DOMAIN", "")
     client_id = os.getenv("AUTH0_CLIENT_ID", "")
     redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
+    
+    state = secrets.token_urlsafe(32)
+    code_verifier = secrets.token_urlsafe(64)
+    hashed = hashlib.sha256(code_verifier.encode('ascii')).digest()
+    code_challenge = base64.urlsafe_b64encode(hashed).decode('ascii').rstrip('=')
+    
+    db = SessionManager.load()
+    db[f"oauth_{state}"] = code_verifier
+    SessionManager.save(db)
+    
     params = {
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "scope": "openid profile email",
-        "state": uuid.uuid4().hex
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256"
     }
     return f"https://{domain}/authorize?" + urllib.parse.urlencode(params)
 
@@ -269,21 +284,35 @@ def init_session_state():
         # 1. Check for Auth0 authorization code callback
         if "code" in st.query_params:
             code = st.query_params.get("code")
+            state_param = st.query_params.get("state")
+            state = state_param[0] if isinstance(state_param, list) and state_param else state_param
             domain = os.getenv("AUTH0_DOMAIN", "")
             client_id = os.getenv("AUTH0_CLIENT_ID", "")
             client_secret = os.getenv("AUTH0_CLIENT_SECRET", "")
             redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
             
-            if domain and client_id and client_secret:
+            if domain and client_id:
                 try:
+                    code_verifier = None
+                    if state:
+                        db = SessionManager.load()
+                        code_verifier = db.get(f"oauth_{state}")
+                        if f"oauth_{state}" in db:
+                            del db[f"oauth_{state}"]
+                            SessionManager.save(db)
+                            
                     token_url = f"https://{domain}/oauth/token"
                     payload = {
                         "grant_type": "authorization_code",
                         "client_id": client_id,
-                        "client_secret": client_secret,
                         "code": code,
                         "redirect_uri": redirect_uri
                     }
+                    if client_secret:
+                        payload["client_secret"] = client_secret
+                    if code_verifier:
+                        payload["code_verifier"] = code_verifier
+                        
                     res = requests.post(token_url, json=payload)
                     if res.status_code == 200:
                         access_token = res.json().get("access_token")
@@ -316,7 +345,7 @@ def init_session_state():
                     st.error(f"Auth0 SSO Error: {e}")
                     st.stop()
             else:
-                st.error("Auth0 Configuration Missing: Please ensure AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET are all set in your Streamlit Cloud Secrets.")
+                st.error("Auth0 Configuration Missing: Please ensure AUTH0_DOMAIN and AUTH0_CLIENT_ID are set in your Streamlit Cloud Secrets.")
                 st.stop()
 
         # 2. Check for persistent session in query parameters to handle page refreshes
