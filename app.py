@@ -527,7 +527,7 @@ def render_auth_ui():
                     auth_url = asyncio.run(client.start_interactive_login(
                         options=StartInteractiveLoginOptions()
                     ))
-            st.sidebar.markdown(f'<a href="{auth_url}" target="_top"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">{get_text("Continue with Email / Social", lang)}</button></a>', unsafe_allow_html=True)
+            st.sidebar.markdown(f'<a href="{auth_url}" target="_blank"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">{get_text("Continue with Email / Social", lang)}</button></a>', unsafe_allow_html=True)
             st.sidebar.caption(get_text("Secure Login", lang))
         else:
             st.sidebar.info("Auth0 SSO is not configured. Set `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, and `AUTH0_SECRET` in `.env`.")
