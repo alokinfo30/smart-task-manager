@@ -17,23 +17,13 @@ try:
     BEAMS_AVAILABLE = True
 except ImportError:
     BEAMS_AVAILABLE = False
-try:
-    from auth0_server_python.auth_server.server_client import ServerClient
-    from auth0_server_python.auth_types import LogoutOptions, StartInteractiveLoginOptions, StateData, TransactionData
-    from auth0_server_python.store.abstract import AbstractDataStore
-    AUTH0_SDK_AVAILABLE = True
-except ImportError:
-    AUTH0_SDK_AVAILABLE = False
 import os
 import re
-import threading
 import tempfile
 from dotenv import load_dotenv
 import time
 import pandas as pd
-from io import StringIO
 from datetime import datetime, timedelta
-import base64
 import json
 import uuid
 import smtplib
@@ -101,45 +91,6 @@ def get_auth0_logout_url():
     return_to = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
     return f"https://{domain}/v2/logout?client_id={client_id}&returnTo={urllib.parse.quote(return_to)}"
 
-# --- Official Auth0 SDK Implementation ---
-if AUTH0_SDK_AVAILABLE:
-    class StreamlitSessionStore(AbstractDataStore):
-        def __init__(self, secret, key_prefix, model):
-            super().__init__({"secret": secret})
-            self.key_prefix = key_prefix
-            self.model = model
-
-        async def set(self, identifier, state, **_):
-            data = state.model_dump() if hasattr(state, "model_dump") else state
-            st.session_state[self.key_prefix] = self.encrypt("st_session", data)
-
-        async def get(self, identifier, options=None):
-            try:
-                encrypted = st.session_state.get(self.key_prefix)
-                if encrypted:
-                    return self.model.model_validate(self.decrypt("st_session", encrypted))
-            except Exception:
-                pass
-            return None
-
-        async def delete(self, identifier, **_):
-            if self.key_prefix in st.session_state:
-                del st.session_state[self.key_prefix]
-
-    def get_auth0_client():
-        session_secret = os.getenv("AUTH0_SECRET")
-        if not session_secret:
-            return None
-        return ServerClient(
-            domain=os.getenv("AUTH0_DOMAIN", ""),
-            client_id=os.getenv("AUTH0_CLIENT_ID", ""),
-            client_secret=os.getenv("AUTH0_CLIENT_SECRET", ""),
-            redirect_uri=os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/",
-            authorization_params={"scope": "openid profile email"},
-            secret=session_secret,
-            state_store=StreamlitSessionStore(session_secret, "_a0_session", StateData),
-            transaction_store=StreamlitSessionStore(session_secret, "_a0_tx", TransactionData),
-        )
 
 def broadcast_update():
     """Broadcast an update event to all active connected browser clients via Pusher."""
@@ -321,7 +272,6 @@ def init_session_state():
             domain = os.getenv("AUTH0_DOMAIN", "")
             client_id = os.getenv("AUTH0_CLIENT_ID", "")
             client_secret = os.getenv("AUTH0_CLIENT_SECRET", "")
-            redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
             redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
             
             if domain and client_id and client_secret:
@@ -346,29 +296,16 @@ def init_session_state():
                             if user_id:
                                 st.session_state.current_user = user_id
                                 st.session_state.auth_method = "Auth0 SSO"
-                                st.query_params.clear() # type: ignore
+                                st.query_params.clear()
+                                # Create a persistent session token for the Auth0 user
+                                token = SessionManager.create_session(user_id)
+                                st.query_params["u"] = token
                                 return
+                        else:
+                            st.sidebar.error(f"Auth0 Token Error: {res.text}")
+                            st.sidebar.info("Hint: In your Auth0 Dashboard, go to your Application Settings and ensure 'Application Type' is set to 'Regular Web Application' (not Single Page Application).")
                 except Exception as e:
                     print(f"Auth0 SSO Error: {e}")
-
-        if "code" in st.query_params and "state" in st.query_params:
-            if AUTH0_SDK_AVAILABLE:
-                client = get_auth0_client()
-                if client:
-                    base_url = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
-                    current_url = f"{base_url}/?" + urllib.parse.urlencode(dict(st.query_params))
-                    try:
-                        asyncio.run(client.complete_interactive_login(url=current_url))
-                        user = asyncio.run(client.get_user())
-                        if user:
-                            user_id = user.get("email") or user.get("nickname") or user.get("sub")
-                            if user_id:
-                                st.session_state.current_user = user_id
-                                st.session_state.auth_method = "Auth0 SSO"
-                                st.query_params.clear() # type: ignore
-                                return
-                    except Exception as e:
-                        print(f"Auth0 SDK Error: {e}")
 
         # 2. Check for persistent session in query parameters to handle page refreshes
         if "u" in st.query_params:
@@ -378,7 +315,12 @@ def init_session_state():
             mobile = SessionManager.get_mobile_from_session(token)
             if mobile:
                 st.session_state.current_user = mobile
-                st.session_state.auth_method = "PIN"
+                db = PasswordDB.load()
+                # Differentiate between PIN accounts and SSO accounts on reload
+                if mobile in db:
+                    st.session_state.auth_method = "PIN"
+                else:
+                    st.session_state.auth_method = "Auth0 SSO"
             else:
                 st.session_state.current_user = "guest"
         else:
@@ -521,12 +463,6 @@ def render_auth_ui():
         
         if os.getenv("AUTH0_DOMAIN") and os.getenv("AUTH0_CLIENT_ID"):
             auth_url = get_auth0_login_url()
-            if AUTH0_SDK_AVAILABLE and os.getenv("AUTH0_SECRET"):
-                client = get_auth0_client()
-                if client:
-                    auth_url = asyncio.run(client.start_interactive_login(
-                        options=StartInteractiveLoginOptions()
-                    ))
             st.sidebar.markdown(f'<a href="{auth_url}" target="_blank"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">{get_text("Continue with Email / Social", lang)}</button></a>', unsafe_allow_html=True)
             st.sidebar.caption(get_text("Secure Login", lang))
         else:
@@ -717,18 +653,6 @@ def render_auth_ui():
                 SessionManager.clear_session(token)
                 
             if st.session_state.auth_method == "Auth0 SSO":
-                if AUTH0_SDK_AVAILABLE:
-                    client = get_auth0_client()
-                    if client:
-                        logout_url = asyncio.run(client.logout(
-                            options=LogoutOptions(return_to=os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/")
-                        ))
-                        st.session_state.current_user = "guest"
-                        st.session_state.auth_method = None
-                        st.query_params.clear() # type: ignore
-                        safe_url = logout_url.replace('&', '&amp;')
-                        st.markdown(f'<meta http-equiv="refresh" content="0; url={safe_url}">', unsafe_allow_html=True)
-                        st.stop()
                 logout_url = get_auth0_logout_url()
                 st.session_state.current_user = "guest"
                 st.session_state.auth_method = None
