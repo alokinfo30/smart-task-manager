@@ -301,11 +301,23 @@ def init_session_state():
                                 token = SessionManager.create_session(user_id)
                                 st.query_params["u"] = token
                                 return
+                                st.rerun()
                         else:
                             st.sidebar.error(f"Auth0 Token Error: {res.text}")
                             st.sidebar.info("Hint: In your Auth0 Dashboard, go to your Application Settings and ensure 'Application Type' is set to 'Regular Web Application' (not Single Page Application).")
+                            st.error(f"Auth0 UserInfo Error: {user_res.text}")
+                            st.stop()
+                    else:
+                        st.error(f"Auth0 Token Error: {res.text}")
+                        st.info("Hint: In your Auth0 Dashboard, ensure 'Application Type' is 'Regular Web Application'. Also check that your APP_BASE_URL matches the Auth0 allowed callback exactly.")
+                        st.stop()
                 except Exception as e:
                     print(f"Auth0 SSO Error: {e}")
+                    st.error(f"Auth0 SSO Error: {e}")
+                    st.stop()
+            else:
+                st.error("Auth0 Configuration Missing: Please ensure AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET are all set in your Streamlit Cloud Secrets.")
+                st.stop()
 
         # 2. Check for persistent session in query parameters to handle page refreshes
         if "u" in st.query_params:
