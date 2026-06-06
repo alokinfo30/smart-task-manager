@@ -1,9 +1,11 @@
 streamlit
 pandas
-websockets
 python-dotenv
 google-genai
 PyPDF2
 fpdf
 requests
 ollama
+pusher
+pusher-push-notifications
+auth0-server-python>=1.0.0b1,<2

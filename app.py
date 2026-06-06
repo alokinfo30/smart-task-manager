@@ -1,25 +1,29 @@
 # asyncio monkeypatch for Windows (fixes ConnectionResetError WinError 10054)
 import sys
-if sys.platform == 'win32':
-    import asyncio
-    from asyncio import proactor_events
-    
-    _orig_call_connection_lost = proactor_events._ProactorBasePipeTransport._call_connection_lost
-    def _patched_call_connection_lost(self, exc):
-        try:
-            _orig_call_connection_lost(self, exc)
-        except (ConnectionResetError, BrokenPipeError):
-            pass
-    proactor_events._ProactorBasePipeTransport._call_connection_lost = _patched_call_connection_lost
+import asyncio
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import streamlit as st
-import asyncio
 import streamlit.components.v1 as components
 try:
-    import websockets
-    WS_AVAILABLE = True
+    import pusher
+    PUSHER_AVAILABLE = True
 except ImportError:
-    WS_AVAILABLE = False
+    PUSHER_AVAILABLE = False
+try:
+    from pusher_push_notifications import PushNotifications
+    BEAMS_AVAILABLE = True
+except ImportError:
+    BEAMS_AVAILABLE = False
+try:
+    from auth0_server_python.auth_server.server_client import ServerClient
+    from auth0_server_python.auth_types import LogoutOptions, StartInteractiveLoginOptions, StateData, TransactionData
+    from auth0_server_python.store.abstract import AbstractDataStore
+    AUTH0_SDK_AVAILABLE = True
+except ImportError:
+    AUTH0_SDK_AVAILABLE = False
 import os
 import re
 import threading
@@ -50,11 +54,38 @@ from translations import get_text
 
 load_dotenv()
 
+# --- Pusher Client for Real-Time Sync ---
+pusher_client = None
+if PUSHER_AVAILABLE:
+    app_id = os.getenv("PUSHER_APP_ID")
+    key = os.getenv("PUSHER_KEY")
+    secret = os.getenv("PUSHER_SECRET")
+    cluster = os.getenv("PUSHER_CLUSTER")
+    if all([app_id, key, secret, cluster]):
+        pusher_client = pusher.Pusher(
+            app_id=app_id,
+            key=key,
+            secret=secret,
+            cluster=cluster,
+            ssl=True
+        )
+
+# --- Pusher Beams Client for Web Push Notifications ---
+beams_backend = None
+if BEAMS_AVAILABLE:
+    beams_instance = os.getenv("PUSHER_BEAMS_INSTANCE_ID")
+    beams_secret = os.getenv("PUSHER_BEAMS_SECRET_KEY")
+    if beams_instance and beams_secret:
+        beams_backend = PushNotifications(
+            instance_id=beams_instance,
+            secret_key=beams_secret,
+        )
+
 # --- Native Auth0 OAuth2 Implementation ---
 def get_auth0_login_url():
     domain = os.getenv("AUTH0_DOMAIN", "")
     client_id = os.getenv("AUTH0_CLIENT_ID", "")
-    redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
+    redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
     params = {
         "response_type": "code",
         "client_id": client_id,
@@ -67,106 +98,97 @@ def get_auth0_login_url():
 def get_auth0_logout_url():
     domain = os.getenv("AUTH0_DOMAIN", "")
     client_id = os.getenv("AUTH0_CLIENT_ID", "")
-    return_to = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
+    return_to = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
     return f"https://{domain}/v2/logout?client_id={client_id}&returnTo={urllib.parse.quote(return_to)}"
 
-# --- WebSocket Server for Real-Time Multiplayer Sync ---
-WS_PORT = 8765
-WS_HOST = os.getenv("WEBSOCKET_HOST", "localhost")
-connected_clients = set()
-ws_loop = None
+# --- Official Auth0 SDK Implementation ---
+if AUTH0_SDK_AVAILABLE:
+    class StreamlitSessionStore(AbstractDataStore):
+        def __init__(self, secret, key_prefix, model):
+            super().__init__({"secret": secret})
+            self.key_prefix = key_prefix
+            self.model = model
 
-async def ws_handler(websocket, *args, **kwargs):
-    """Manage active WebSocket connections from the frontend."""
-    connected_clients.add(websocket)
-    try:
-        async for message in websocket:
+        async def set(self, identifier, state, **_):
+            data = state.model_dump() if hasattr(state, "model_dump") else state
+            st.session_state[self.key_prefix] = self.encrypt("st_session", data)
+
+        async def get(self, identifier, options=None):
             try:
-                data = json.loads(message)
-                if data.get("type") == "wasm_chat":
-                    user = data.get("user")
-                    prompt = data.get("prompt")
-                    response = data.get("response")
-                    if user and user != "guest":
-                        state = load_chat_state(user)
-                        chat_display = state.get("chat_display", [])
-                        agent_history = state.get("agent_history", [])
-                        
-                        chat_display.append({"role": "user", "content": prompt, "timestamp": datetime.now().isoformat(), "archived": False})
-                        chat_display.append({"role": "assistant", "content": response + "\n\n*(Generated by Offline Browser AI)*", "timestamp": datetime.now().isoformat(), "archived": False})
-                        
-                        save_chat_state(agent_history, chat_display, user)
-                        
-                        for client in connected_clients:
-                            try:
-                                await client.send("update")
-                            except Exception:
-                                pass
+                encrypted = st.session_state.get(self.key_prefix)
+                if encrypted:
+                    return self.model.model_validate(self.decrypt("st_session", encrypted))
             except Exception:
                 pass
-    except Exception:
-        pass
-    finally:
-        connected_clients.remove(websocket)
+            return None
 
-async def ws_main():
-    """Async context for running the WebSocket server."""
-    try:
-        async with websockets.serve(ws_handler, WS_HOST, WS_PORT):
-            await asyncio.Future()  # Run forever
-    except OSError:
-        # Port already in use (likely due to Streamlit's auto-reloader)
-        pass
+        async def delete(self, identifier, **_):
+            if self.key_prefix in st.session_state:
+                del st.session_state[self.key_prefix]
 
-def run_ws_server():
-    global ws_loop
-    ws_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(ws_loop)
-    try:
-        server = websockets.serve(ws_handler, WS_HOST, WS_PORT)
-        ws_loop.run_until_complete(server)
-        ws_loop.run_forever()
-    except OSError:
-        # Port already in use (likely due to Streamlit's auto-reloader)
-        ws_loop.run_until_complete(ws_main())
-    except Exception:
-        pass
-
-if WS_AVAILABLE:
-    @st.cache_resource
-    def start_websocket_server():
-        """Start the WebSocket broadcaster in a background daemon thread."""
-        t = threading.Thread(target=run_ws_server, daemon=True)
-        t.start()
-        return True
-    start_websocket_server()
+    def get_auth0_client():
+        session_secret = os.getenv("AUTH0_SECRET")
+        if not session_secret:
+            return None
+        return ServerClient(
+            domain=os.getenv("AUTH0_DOMAIN", ""),
+            client_id=os.getenv("AUTH0_CLIENT_ID", ""),
+            client_secret=os.getenv("AUTH0_CLIENT_SECRET", ""),
+            redirect_uri=os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/",
+            authorization_params={"scope": "openid profile email"},
+            secret=session_secret,
+            state_store=StreamlitSessionStore(session_secret, "_a0_session", StateData),
+            transaction_store=StreamlitSessionStore(session_secret, "_a0_tx", TransactionData),
+        )
 
 def broadcast_update():
-    """Broadcast an update event to all active connected browser clients."""
-    global ws_loop
-    if WS_AVAILABLE and ws_loop and connected_clients:
+    """Broadcast an update event to all active connected browser clients via Pusher."""
+    if pusher_client:
         try:
-            asyncio.run_coroutine_threadsafe(
-                asyncio.gather(*(ws.send("update") for ws in connected_clients)),
-                ws_loop
-            )
-        except Exception:
-            pass
+            pusher_client.trigger('task-board', 'update', {'message': 'tasks_updated'})
+            print("Pusher event broadcasted.")
+        except Exception as e:
+            print(f"Pusher broadcast failed: {e}")
 
-def render_websocket_client():
-    """Inject JS to listen for remote updates and trigger browser notifications."""
-    if not WS_AVAILABLE:
+def render_pusher_client():
+    """Inject JS to listen for remote updates via Pusher."""
+    if not pusher_client:
         return
+    
+    pusher_key = os.getenv("PUSHER_KEY")
+    pusher_cluster = os.getenv("PUSHER_CLUSTER")
+    beams_instance_id = os.getenv("PUSHER_BEAMS_INSTANCE_ID", "3005694d-c9a2-4cc9-a1b7-fd96d3e6d03a")
+
     js = f"""
+    <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
+    <script src="https://js.pusher.com/beams/2.1.0/push-notifications-cdn.js"></script>
     <script>
-        if (!window.wsSyncConnected) {{
-            const ws = new WebSocket('ws://{WS_HOST}:{WS_PORT}');
-            ws.onmessage = function(event) {{
-                if (event.data === 'update' && Notification.permission === 'granted') {{
+        if (!window.pusherSubscribed) {{
+            Pusher.logToConsole = false;
+
+            const pusher = new Pusher('{pusher_key}', {{
+                cluster: '{pusher_cluster}'
+            }});
+
+            const channel = pusher.subscribe('task-board');
+            channel.bind('update', function(data) {{
+                if (Notification.permission === 'granted') {{
                     new Notification('Smart Task Agent', {{ body: 'Task board updated remotely by another device or AI.' }});
                 }}
-            }};
-            window.wsSyncConnected = true;
+            }});
+            window.pusherSubscribed = true;
+        }}
+
+        if (!window.beamsInitialized) {{
+            const beamsClient = new PusherPushNotifications.Client({{
+                instanceId: '{beams_instance_id}',
+            }});
+
+            beamsClient.start()
+                .then(() => beamsClient.addDeviceInterest('hello'))
+                .then(() => console.log('Successfully registered and subscribed!'))
+                .catch(console.error);
+            window.beamsInitialized = true;
         }}
     </script>
     """
@@ -235,10 +257,12 @@ def create_pdf(text: str):
             pdf.output(tmp.name)
             with open(tmp.name, "rb") as f:
                 pdf_bytes = f.read()
-        os.remove(tmp.name)
         return pdf_bytes
     except Exception:
         return None
+    finally:
+        if 'tmp' in locals() and os.path.exists(tmp.name):
+            os.remove(tmp.name)
 
 def mask_mobile(mobile):
     """Helper to mask mobile numbers or emails for privacy."""
@@ -288,6 +312,8 @@ def init_session_state():
         st.session_state.checkbox_suffix = 0
     if "language" not in st.session_state:
         st.session_state.language = get_default_language()
+    if "auth_method" not in st.session_state:
+        st.session_state.auth_method = None
     if "current_user" not in st.session_state:
         # 1. Check for Auth0 authorization code callback
         if "code" in st.query_params:
@@ -296,6 +322,7 @@ def init_session_state():
             client_id = os.getenv("AUTH0_CLIENT_ID", "")
             client_secret = os.getenv("AUTH0_CLIENT_SECRET", "")
             redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
+            redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
             
             if domain and client_id and client_secret:
                 try:
@@ -323,6 +350,25 @@ def init_session_state():
                                 return
                 except Exception as e:
                     print(f"Auth0 SSO Error: {e}")
+
+        if "code" in st.query_params and "state" in st.query_params:
+            if AUTH0_SDK_AVAILABLE:
+                client = get_auth0_client()
+                if client:
+                    base_url = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
+                    current_url = f"{base_url}/?" + urllib.parse.urlencode(dict(st.query_params))
+                    try:
+                        asyncio.run(client.complete_interactive_login(url=current_url))
+                        user = asyncio.run(client.get_user())
+                        if user:
+                            user_id = user.get("email") or user.get("nickname") or user.get("sub")
+                            if user_id:
+                                st.session_state.current_user = user_id
+                                st.session_state.auth_method = "Auth0 SSO"
+                                st.query_params.clear() # type: ignore
+                                return
+                    except Exception as e:
+                        print(f"Auth0 SDK Error: {e}")
 
         # 2. Check for persistent session in query parameters to handle page refreshes
         if "u" in st.query_params:
@@ -475,6 +521,12 @@ def render_auth_ui():
         
         if os.getenv("AUTH0_DOMAIN") and os.getenv("AUTH0_CLIENT_ID"):
             auth_url = get_auth0_login_url()
+            if AUTH0_SDK_AVAILABLE and os.getenv("AUTH0_SECRET"):
+                client = get_auth0_client()
+                if client:
+                    auth_url = asyncio.run(client.start_interactive_login(
+                        options=StartInteractiveLoginOptions()
+                    ))
             st.sidebar.markdown(f'<a href="{auth_url}" target="_self"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">{get_text("Continue with Email / Social", lang)}</button></a>', unsafe_allow_html=True)
             st.sidebar.caption(get_text("Secure Login", lang))
         else:
@@ -558,17 +610,6 @@ def render_auth_ui():
                     try {
                         const response = await llmInference.generateResponse(text);
                         responseOut.innerText = response;
-
-                        const syncWs = new WebSocket('ws://__WS_HOST__:__WS_PORT__');
-                        syncWs.onopen = () => {
-                            syncWs.send(JSON.stringify({
-                                type: 'wasm_chat',
-                                user: '__CURRENT_USER__',
-                                prompt: text,
-                                response: response
-                            }));
-                            syncWs.close();
-                        };
                     } catch (e) {
                         responseOut.innerText = "Error generating response: " + e.message;
                     } finally {
@@ -579,7 +620,7 @@ def render_auth_ui():
 
                 initModel();
             </script>
-            """.replace('__WS_HOST__', WS_HOST).replace('__WS_PORT__', str(WS_PORT)).replace('__CURRENT_USER__', st.session_state.current_user)
+            """
             components.html(wasm_html, height=350, scrolling=True)
 
         # --- Desktop Offline AI (Ollama) Status ---
@@ -676,6 +717,18 @@ def render_auth_ui():
                 SessionManager.clear_session(token)
                 
             if st.session_state.auth_method == "Auth0 SSO":
+                if AUTH0_SDK_AVAILABLE:
+                    client = get_auth0_client()
+                    if client:
+                        logout_url = asyncio.run(client.logout(
+                            options=LogoutOptions(return_to=os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/")
+                        ))
+                        st.session_state.current_user = "guest"
+                        st.session_state.auth_method = None
+                        st.query_params.clear() # type: ignore
+                        safe_url = logout_url.replace('&', '&amp;')
+                        st.markdown(f'<meta http-equiv="refresh" content="0; url={safe_url}">', unsafe_allow_html=True)
+                        st.stop()
                 logout_url = get_auth0_logout_url()
                 st.session_state.current_user = "guest"
                 st.session_state.auth_method = None
@@ -903,6 +956,23 @@ def send_routine_notifications(routine_name, time_str, action):
             requests.post(url, json={'chat_id': chat_id, 'text': f"🔔 {message}"}, timeout=5)
         except Exception as e:
             print(f"Failed to send Telegram message: {e}")
+            
+    # 4. Pusher Beams Push Notification
+    if 'beams_backend' in globals() and beams_backend:
+        try:
+            beams_backend.publish_to_interests(
+                interests=['hello'],
+                publish_body={
+                    'web': {
+                        'notification': {
+                            'title': 'Smart Task Agent: Routine Reminder',
+                            'body': message
+                        }
+                    }
+                }
+            )
+        except Exception as e:
+            print(f"Failed to send Beams push notification: {e}")
 
 def check_routine_alerts(current_user):
     """Displays global alerts for check-ins/outs based on time."""
@@ -1222,7 +1292,7 @@ def render_routines(current_user):
 def render_dashboard(current_user):
     """Renders the main dashboard, including metrics, table, and editor."""
     
-    render_websocket_client()
+    render_pusher_client()
     lang = st.session_state.language
 
     SCHOOL_QUOTES = [
@@ -1961,6 +2031,8 @@ def render_dashboard(current_user):
                         full_exp['Owner'] = full_exp['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
                         other_exp = full_exp[full_exp['Owner'] != current_user]
                         pd.concat([other_exp, save_df], ignore_index=True).to_csv(tools.EXPENSES_FILE, index=False)
+                    else:
+                        save_df.to_csv(tools.EXPENSES_FILE, index=False)
                     st.success(get_text("Changes saved!", lang))
                     st.rerun()
 

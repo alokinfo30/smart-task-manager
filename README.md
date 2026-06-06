@@ -145,6 +145,14 @@ GOOGLE_API_KEY="your_google_api_key"
 APP_BASE_URL="http://localhost:8501"
 WEBSOCKET_HOST="localhost"
 GA_MEASUREMENT_ID="G-YOUR_DEV_ID"
+# Pusher (for real-time sync)
+PUSHER_APP_ID="your_pusher_app_id"
+PUSHER_KEY="your_pusher_key"
+PUSHER_SECRET="your_pusher_secret"
+PUSHER_CLUSTER="your_pusher_cluster"
+# Pusher Beams (for web push notifications)
+PUSHER_BEAMS_INSTANCE_ID="3005694d-c9a2-4cc9-a1b7-fd96d3e6d03a"
+PUSHER_BEAMS_SECRET_KEY="415DE55DCF6F73C6DB4B49913C6342ABDE65E16EE1DC6DEE6DE322236EDDB5DE"
 # ... other keys like Auth0, Gmail, Telegram ...
 ```
 
