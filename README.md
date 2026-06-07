@@ -13,7 +13,7 @@ Make sure to install the required PDF dependencies to use the Resume generation 
 ## 🌟 Key Features of the Application
 
 ### 1. Secure Authentication & Session Management
-- **Multiple Login Methods**: Auth0 SSO (Email/Social integrations), Mobile Number & 6-Digit PIN, or a quick Demo Guest Mode.
+- **Multiple Login Methods**: Google SSO, Mobile Number & 6-Digit PIN, or a quick Demo Guest Mode.
 - **Security & Account Recovery**: 3-attempt lockout auto-reset mechanism and security questions for PIN recovery.
 - **Privacy Masking**: Protects sensitive mobile numbers across the UI (e.g., `98******10`).
 
@@ -56,7 +56,7 @@ Make sure to install the required PDF dependencies to use the Resume generation 
 - **Frontend & Web Framework**: Streamlit
 - **Programming Language**: Python 3
 - **Artificial Intelligence**: Google Generative AI SDK (Gemini 1.5 Flash, Gemini 2.0 Flash, Gemini 1.5 Flash-8B)
-- **Authentication**: Auth0 SDK & Custom PBKDF2 Hashing
+- **Authentication**: Google OAuth 2.0 & Custom PBKDF2 Hashing
 - **Real-Time Communication**: `websockets` & `asyncio`
 - **Data Manipulation**: `pandas`
 - **Storage**: Flat files (`CSV`, `JSON`, `TXT`)
@@ -153,7 +153,7 @@ PUSHER_CLUSTER="your_pusher_cluster"
 # Pusher Beams (for web push notifications)
 PUSHER_BEAMS_INSTANCE_ID="3005694d-c9a2-4cc9-a1b7-fd96d3e6d03a"
 PUSHER_BEAMS_SECRET_KEY="415DE55DCF6F73C6DB4B49913C6342ABDE65E16EE1DC6DEE6DE322236EDDB5DE"
-# ... other keys like Auth0, Gmail, Telegram ...
+# ... other keys like Google OAuth, Gmail, Telegram ...
 ```
 
 #### 2. Production (Live Server)

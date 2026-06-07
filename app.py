@@ -3,7 +3,21 @@ import sys
 import asyncio
 
 if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    try:
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+        
+        _original_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+        
+        def _call_connection_lost_safe(self, *args, **kwargs):
+            try:
+                _original_call_connection_lost(self, *args, **kwargs)
+            except ConnectionResetError as e:
+                if getattr(e, 'winerror', None) != 10054:
+                    raise
+                    
+        _ProactorBasePipeTransport._call_connection_lost = _call_connection_lost_safe
+    except ImportError:
+        pass
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -74,10 +88,9 @@ if BEAMS_AVAILABLE:
             secret_key=beams_secret,
         )
 
-# --- Native Auth0 OAuth2 Implementation ---
-def get_auth0_login_url():
-    domain = os.getenv("AUTH0_DOMAIN", "")
-    client_id = os.getenv("AUTH0_CLIENT_ID", "")
+# --- Native Google OAuth2 Implementation ---
+def get_google_login_url():
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
     redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
     
     state = secrets.token_urlsafe(32)
@@ -96,15 +109,11 @@ def get_auth0_login_url():
         "scope": "openid profile email",
         "state": state,
         "code_challenge": code_challenge,
-        "code_challenge_method": "S256"
+        "code_challenge_method": "S256",
+        "access_type": "offline",
+        "prompt": "select_account"
     }
-    return f"https://{domain}/authorize?" + urllib.parse.urlencode(params)
-
-def get_auth0_logout_url():
-    domain = os.getenv("AUTH0_DOMAIN", "")
-    client_id = os.getenv("AUTH0_CLIENT_ID", "")
-    return_to = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
-    return f"https://{domain}/v2/logout?client_id={client_id}&returnTo={urllib.parse.quote(return_to)}"
+    return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
 
 
 def broadcast_update():
@@ -281,17 +290,16 @@ def init_session_state():
     if "auth_method" not in st.session_state:
         st.session_state.auth_method = None
     if "current_user" not in st.session_state:
-        # 1. Check for Auth0 authorization code callback
+        # 1. Check for Google authorization code callback
         if "code" in st.query_params:
             code = st.query_params.get("code")
             state_param = st.query_params.get("state")
             state = state_param[0] if isinstance(state_param, list) and state_param else state_param
-            domain = os.getenv("AUTH0_DOMAIN", "")
-            client_id = os.getenv("AUTH0_CLIENT_ID", "")
-            client_secret = os.getenv("AUTH0_CLIENT_SECRET", "")
+            client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+            client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
             redirect_uri = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/") + "/"
             
-            if domain and client_id:
+            if client_id and client_secret:
                 try:
                     code_verifier = None
                     if state:
@@ -301,7 +309,7 @@ def init_session_state():
                             del db[f"oauth_{state}"]
                             SessionManager.save(db)
                             
-                    token_url = f"https://{domain}/oauth/token"
+                    token_url = "https://oauth2.googleapis.com/token"
                     payload = {
                         "grant_type": "authorization_code",
                         "client_id": client_id,
@@ -313,10 +321,10 @@ def init_session_state():
                     if code_verifier:
                         payload["code_verifier"] = code_verifier
                         
-                    res = requests.post(token_url, json=payload)
+                    res = requests.post(token_url, data=payload)
                     if res.status_code == 200:
                         access_token = res.json().get("access_token")
-                        user_url = f"https://{domain}/userinfo"
+                        user_url = "https://www.googleapis.com/oauth2/v3/userinfo"
                         headers = {"Authorization": f"Bearer {access_token}"}
                         user_res = requests.get(user_url, headers=headers)
                         if user_res.status_code == 200:
@@ -324,28 +332,25 @@ def init_session_state():
                             user_id = user_info.get("email") or user_info.get("nickname") or user_info.get("sub")
                             if user_id:
                                 st.session_state.current_user = user_id
-                                st.session_state.auth_method = "Auth0 SSO"
+                                st.session_state.auth_method = "Google SSO"
                                 st.query_params.clear()
-                                # Create a persistent session token for the Auth0 user
+                                # Create a persistent session token for the Google user
                                 token = SessionManager.create_session(user_id)
                                 st.query_params["u"] = token
-                                return
                                 st.rerun()
                         else:
-                            st.sidebar.error(f"Auth0 Token Error: {res.text}")
-                            st.sidebar.info("Hint: In your Auth0 Dashboard, go to your Application Settings and ensure 'Application Type' is set to 'Regular Web Application' (not Single Page Application).")
-                            st.error(f"Auth0 UserInfo Error: {user_res.text}")
+                            st.error(f"Google UserInfo Error: {user_res.text}")
                             st.stop()
                     else:
-                        st.error(f"Auth0 Token Error: {res.text}")
-                        st.info("Hint: In your Auth0 Dashboard, ensure 'Application Type' is 'Regular Web Application'. Also check that your APP_BASE_URL matches the Auth0 allowed callback exactly.")
+                        st.error(f"Google Token Error: {res.text}")
+                        st.info("Hint: Ensure your Google Cloud Console OAuth credentials have the correct redirect URI and client secret.")
                         st.stop()
                 except Exception as e:
-                    print(f"Auth0 SSO Error: {e}")
-                    st.error(f"Auth0 SSO Error: {e}")
+                    print(f"Google SSO Error: {e}")
+                    st.error(f"Google SSO Error: {e}")
                     st.stop()
             else:
-                st.error("Auth0 Configuration Missing: Please ensure AUTH0_DOMAIN and AUTH0_CLIENT_ID are set in your Streamlit Cloud Secrets.")
+                st.error("Google Configuration Missing: Please ensure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set.")
                 st.stop()
 
         # 2. Check for persistent session in query parameters to handle page refreshes
@@ -361,7 +366,7 @@ def init_session_state():
                 if mobile in db:
                     st.session_state.auth_method = "PIN"
                 else:
-                    st.session_state.auth_method = "Auth0 SSO"
+                    st.session_state.auth_method = "Google SSO"
             else:
                 st.session_state.current_user = "guest"
         else:
@@ -502,12 +507,12 @@ def render_auth_ui():
         st.sidebar.divider()
         st.sidebar.subheader(get_text("🌐 Login with Email / Social", lang))
         
-        if os.getenv("AUTH0_DOMAIN") and os.getenv("AUTH0_CLIENT_ID"):
-            auth_url = get_auth0_login_url()
-            st.sidebar.markdown(f'<a href="{auth_url}" target="_blank"><button style="width:100%; padding:0.5rem; background-color:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">{get_text("Continue with Email / Social", lang)}</button></a>', unsafe_allow_html=True)
+        if os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"):
+            auth_url = get_google_login_url()
+            st.sidebar.markdown(f'<a href="{auth_url}" target="_blank"><button style="width:100%; padding:0.5rem; background-color:#4285F4; color:white; border:none; border-radius:4px; cursor:pointer;">Continue with Google</button></a>', unsafe_allow_html=True)
             st.sidebar.caption(get_text("Secure Login", lang))
         else:
-            st.sidebar.info("Auth0 SSO is not configured. Set `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, and `AUTH0_SECRET` in `.env`.")
+            st.sidebar.info("Google SSO is not configured. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env`.")
             
         st.sidebar.divider()
 
@@ -693,19 +698,10 @@ def render_auth_ui():
                 token = token_param[0] if isinstance(token_param, list) and token_param else token_param
                 SessionManager.clear_session(token)
                 
-            if st.session_state.auth_method == "Auth0 SSO":
-                logout_url = get_auth0_logout_url()
-                st.session_state.current_user = "guest"
-                st.session_state.auth_method = None
-                st.query_params.clear() # type: ignore
-                safe_url = logout_url.replace('&', '&amp;')
-                st.markdown(f'<meta http-equiv="refresh" content="0; url={safe_url}">', unsafe_allow_html=True)
-                st.stop()
-            else:
-                st.session_state.current_user = "guest"
-                st.session_state.auth_method = None
-                st.query_params.clear() # type: ignore
-                st.rerun()
+            st.session_state.current_user = "guest"
+            st.session_state.auth_method = None
+            st.query_params.clear() # type: ignore
+            st.rerun()
         
         return st.session_state.current_user
 
