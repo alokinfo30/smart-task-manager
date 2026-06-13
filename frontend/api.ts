@@ -1,11 +1,6 @@
 import axios from 'axios';
 
-// Proxy requests through Next.js to completely bypass third-party cookie blockers and CORS
-let baseURL = '';
-if (typeof window === 'undefined') {
-  // Only use the absolute URL when rendering on the server side (SSR/SSG)
-  baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-}
+const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL,
