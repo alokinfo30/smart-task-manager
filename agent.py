@@ -1,5 +1,6 @@
 # agent.py
 import os
+import requests
 from dotenv import load_dotenv
 from google import genai
 import tools
@@ -14,14 +15,14 @@ except ImportError:
 
 load_dotenv()
 
+# MachinaOS Agent Configuration
+MACHINAOS_API_KEY = os.getenv("MACHINAOS_API_KEY")
+MACHINAOS_API_URL = os.getenv("MACHINAOS_API_URL", "https://api.machinaos.com/v1/chat/completions")
+MACHINAOS_MODEL = os.getenv("MACHINAOS_MODEL", "machina-agent-v1")
+
 # Gemini Flash models are available completely FREE of cost on the Google AI Studio Free Tier
 MODEL_FALLBACKS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-pro-latest",
-    "gemma-2-27b-it",
-    "gemma-2-9b-it"
+    "gemini-1.5-flash"
 ]
 OFFLINE_MODEL = os.getenv("OFFLINE_MODEL", "llama3.2")
 
@@ -31,9 +32,10 @@ api_key = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
 
 def get_history_file_path(user_id):
-    if user_id == "guest":
+    if str(user_id).startswith("guest") or str(user_id).startswith("demo_"):
         return None # Guests don't have persistent chat history
-    return f"chat_history_{user_id}.json"
+    safe_id = "".join(c for c in str(user_id) if c.isalnum() or c in ("_", "-", "@", "."))
+    return f"chat_history_{safe_id}.json"
 
 SYSTEM_INSTRUCTION = """
 You are a highly capable Personal Task Assistant. Your goal is to help the user manage their professional and personal life efficiently.
@@ -194,6 +196,70 @@ def normalize_history(history):
             continue
     return normalized
 
+def execute_fallback_chain(prompt: str, messages: list, system_instruction: str, last_error: Exception) -> str:
+    """Centralized fallback handler for MachinaOS and local Ollama when Google API fails."""
+    le = str(last_error)
+    if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le or "404" in le or "NOT_FOUND" in le:
+        if MACHINAOS_API_KEY:
+            try:
+                print(f"Routing to MachinaOS Agent: {MACHINAOS_MODEL}...")
+                machina_msgs = []
+                if system_instruction:
+                    machina_msgs.append({"role": "system", "content": system_instruction + "\n[SYSTEM NOTICE: You are running via MachinaOS Agent. You CANNOT execute local Python tools right now. Provide helpful advice, task breakdown, or conversational responses based on the prompt.]"})
+                for m in messages:
+                    role = "assistant" if getattr(m, "role", "") == "model" else getattr(m, "role", "user")
+                    text = ""
+                    if getattr(m, 'parts', None):
+                        for p in m.parts:
+                            if getattr(p, 'text', None):
+                                text += p.text + "\n"
+                    if text.strip():
+                        machina_msgs.append({"role": role, "content": text.strip()})
+                machina_msgs.append({"role": "user", "content": prompt})
+                
+                payload = {
+                    "model": MACHINAOS_MODEL,
+                    "messages": machina_msgs,
+                    "temperature": 0.25
+                }
+                headers = {"Authorization": f"Bearer {MACHINAOS_API_KEY}", "Content-Type": "application/json"}
+                response = requests.post(MACHINAOS_API_URL, json=payload, headers=headers, timeout=45)
+                response.raise_for_status()
+                return response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            except Exception as machina_err:
+                print(f"MachinaOS fallback failed: {machina_err}")
+                le = f"MachinaOS Error: {machina_err} | Original: {le}"
+
+        if OLLAMA_AVAILABLE:
+            try:
+                print(f"Falling back to local offline model: {OFFLINE_MODEL}...")
+                ollama_msgs = []
+                if system_instruction:
+                    ollama_msgs.append({"role": "system", "content": system_instruction + "\n[SYSTEM NOTICE: You are running in OFFLINE FALLBACK MODE because the primary API quota is exhausted. You CANNOT execute tools (add_task, delete_task, etc.) right now. Provide helpful advice or conversational responses instead.]"})
+                for m in messages:
+                    role = "assistant" if getattr(m, "role", "") == "model" else getattr(m, "role", "user")
+                    text = ""
+                    if getattr(m, 'parts', None):
+                        for p in m.parts:
+                            if getattr(p, 'text', None):
+                                text += p.text + "\n"
+                    if text.strip():
+                        ollama_msgs.append({"role": role, "content": text.strip()})
+                ollama_msgs.append({"role": "user", "content": prompt})
+                
+                response = ollama.chat(model=OFFLINE_MODEL, messages=ollama_msgs)
+                return response['message']['content']
+            except Exception as ollama_err:
+                print(f"Offline fallback failed: {ollama_err}")
+                hint = f"\n\n*(Hint: If you are running locally or on a VPS, open your terminal and run `ollama pull {OFFLINE_MODEL}`)*" if "not found" in str(ollama_err).lower() else "\n\n*(Note: Streamlit Community Cloud does not support running Ollama. You must resolve the Google API quota to use AI in production.)*"
+                return f"⏳ **Offline Fallback Failed**: The Google API limit was reached, but the offline model ('{OFFLINE_MODEL}') also failed. Ensure Ollama is running.{hint}\n\n*Ollama Error*: `{ollama_err}`\n\n*Original API Error*: `{le}`"
+        else:
+            return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*"
+            
+    if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
+        return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
+    return f"Error: {str(last_error)}"
+
 def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "guest", language: str = "English") -> tuple[str, list]:
     if not api_key or not client:
         return "Error: GOOGLE_API_KEY not found. Please set it to use the Agentic AI features.", history or []
@@ -310,35 +376,9 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
 
     # If all models failed, return the clearest error possible
     if last_error:
-        le = str(last_error)
-        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le or "404" in le or "NOT_FOUND" in le:
-            if OLLAMA_AVAILABLE:
-                try:
-                    print(f"Falling back to local offline model: {OFFLINE_MODEL}...")
-                    ollama_msgs = [{"role": "system", "content": dynamic_instruction + "\n[SYSTEM NOTICE: You are running in OFFLINE FALLBACK MODE because the primary API quota is exhausted. You CANNOT execute tools (add_task, delete_task, etc.) right now. Provide helpful advice or conversational responses instead.]"}]
-                    for m in messages:
-                        role = "assistant" if getattr(m, "role", "") == "model" else getattr(m, "role", "user")
-                        text = ""
-                        if getattr(m, 'parts', None):
-                            for p in m.parts:
-                                if getattr(p, 'text', None):
-                                    text += p.text + "\n"
-                        if text.strip():
-                            ollama_msgs.append({"role": role, "content": text.strip()})
-                    ollama_msgs.append({"role": "user", "content": prompt})
-                    
-                    response = ollama.chat(model=OFFLINE_MODEL, messages=ollama_msgs)
-                    return response['message']['content'], history or []
-                except Exception as ollama_err:
-                    print(f"Offline fallback failed: {ollama_err}")
-                    hint = f"\n\n*(Hint: Open your terminal and run `ollama pull {OFFLINE_MODEL}` to download the model)*" if "not found" in str(ollama_err).lower() else ""
-                    return f"⏳ **Offline Fallback Failed**: The Google API limit was reached, but the local offline model ('{OFFLINE_MODEL}') also failed. Ensure Ollama is running.{hint}\n\n*Ollama Error*: `{ollama_err}`\n\n*Original API Error*: `{le}`", history or []
-            else:
-                return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key's project requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*", history or []
-                
-        if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
-            return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments.", history or []
-    return f"Error: {str(last_error)}", history or []
+        result_text = execute_fallback_chain(prompt, messages, dynamic_instruction, last_error)
+        return result_text, history or []
+    return "Error: Unknown failure.", history or []
     
 def generate_learning_content(topic_or_jd: str, language: str = "English") -> str:
     """Generates a learning module on a specific topic or a learning plan from a job description."""
@@ -388,22 +428,7 @@ def generate_learning_content(topic_or_jd: str, language: str = "English") -> st
             continue
             
     if last_error:
-        le = str(last_error)
-        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le or "404" in le or "NOT_FOUND" in le:
-            if OLLAMA_AVAILABLE:
-                try:
-                    print(f"Falling back to local offline model: {OFFLINE_MODEL}...")
-                    response = ollama.chat(model=OFFLINE_MODEL, messages=[{"role": "user", "content": prompt}])
-                    return response['message']['content']
-                except Exception as e:
-                    print(f"Offline fallback failed: {e}")
-                    hint = f"\n\n*(Hint: Open your terminal and run `ollama pull {OFFLINE_MODEL}` to download the model)*" if "not found" in str(e).lower() else ""
-                    return f"⏳ **Offline Fallback Failed**: Ensure Ollama is running.{hint}\n*Ollama Error*: `{e}`\n\n*Original API Error*: `{le}`"
-            else:
-                return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*"
-        if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
-            return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
-        return f"Failed to generate learning content. Error: {le}"
+        return execute_fallback_chain(prompt, [], None, last_error)
 
     return "Failed to generate learning content. Please try again later."
 
@@ -445,34 +470,10 @@ def generate_tailored_resume(user_info: str, job_desc: str, language: str = "Eng
             continue
             
     if last_error:
-        le = str(last_error)
-        if "RESOURCE_EXHAUSTED" in le or "quota" in le.lower() or "429" in le or "404" in le or "NOT_FOUND" in le:
-            if OLLAMA_AVAILABLE:
-                try:
-                    print(f"Falling back to local offline model: {OFFLINE_MODEL}...")
-                    response = ollama.chat(model=OFFLINE_MODEL, messages=[{"role": "user", "content": prompt}])
-                    return response['message']['content']
-                except Exception as e:
-                    print(f"Offline fallback failed: {e}")
-                    hint = f"\n\n*(Hint: Open your terminal and run `ollama pull {OFFLINE_MODEL}` to download the model)*" if "not found" in str(e).lower() else ""
-                    return f"⏳ **Offline Fallback Failed**: Ensure Ollama is running.{hint}\n*Ollama Error*: `{e}`\n\n*Original API Error*: `{le}`"
-            else:
-                return f"⏳ **API Issue/Quota Exceeded**: Google API limit reached or model unavailable. You may have hit the daily free tier limit, or your API key requires billing setup.\n\n*Detailed Error*: `{le}`\n\n*(Note: To enable the backend offline AI fallback, install Ollama from ollama.com and run `pip install ollama`)*"
-        if ("UNAVAILABLE" in le) or ("503" in le) or ("high demand" in le.lower()):
-            return "I am currently experiencing high demand and am temporarily unavailable. Please try again in a few moments."
-        return f"Failed to generate tailored resume. Error: {le}"
+        return execute_fallback_chain(prompt, [], None, last_error)
 
     return "Failed to generate tailored resume. Please try again later."
 
 if __name__ == "__main__":
-    # Initialize a demo todo file if it doesn't exist
-    if not os.path.exists("todo.txt"):
-        print("🛠️ Creating sample 'todo.txt'...")
-        with open("todo.txt", "w", encoding="utf-8") as f:
-            f.write("Date,Task,Status,Priority\n"
-                    "2026-05-29,Review backend schema,Pending,Medium\n"
-                    "2026-05-29,Clean docker states,Working,Medium\n"
-                    "2026-05-29,Mentor students,Pending,High")
-
     user_command = "Analyze my tasks, create the daily technical summary, and log it."
     run_autonomous_agent(user_command)

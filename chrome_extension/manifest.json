@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Smart Task Manager",
+  "version": "1.0",
+  "description": "AI-powered task assistant featuring automated analysis, persistent history, and real-time productivity tracking.",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Launch Smart Task Manager"
+  }
+}

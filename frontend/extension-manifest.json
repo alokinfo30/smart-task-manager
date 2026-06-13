@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Smart Task Manager",
+  "version": "1.0.0",
+  "description": "AI-powered offline-first task and expense manager.",
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "Open Task Manager"
+  },
+  "permissions": [
+    "storage",
+    "notifications"
+  ]
+}

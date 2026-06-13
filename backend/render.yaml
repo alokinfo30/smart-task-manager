@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: smart-task-manager-api
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: FRONTEND_URLS
+        value: "https://your-frontend-project.vercel.app"
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PUSHER_APP_ID
+        sync: false
+      - key: PUSHER_KEY
+        sync: false
+      - key: PUSHER_SECRET
+        sync: false
+      - key: PUSHER_CLUSTER
+        sync: false

@@ -2,8 +2,7 @@ TRANSLATIONS = {
     "Hindi": {
         "🤖 Smart Task Manager Agent": "🤖 स्मार्ट टास्क मैनेजर एजेंट",
         "🔐 Sign In / Register": "🔐 साइन इन / रजिस्टर",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **अतिथि मोड**: आपके कार्य दूसरों को दिखाई देते हैं। अपना डेटा सुरक्षित करने के लिए लॉग इन करें।",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "अतिथि के रूप में, आप AI सहायक का उपयोग नहीं कर सकते, कार्य सहेज नहीं सकते, या संग्रह नहीं देख सकते।",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **अतिथि मोड**: सभी सुविधाएँ सक्षम हैं, लेकिन भविष्य के उद्देश्य के लिए कोई डेटा सहेजा नहीं जाएगा।",
         "📋 Tasks & AI Agent": "📋 कार्य और एआई एजेंट",
         "⏱️ Daily Routines & Punctuality": "⏱️ दैनिक दिनचर्या और समयपालन",
         "📝 Task Editor": "📝 कार्य संपादक",
@@ -160,8 +159,7 @@ TRANSLATIONS = {
     "Spanish": {
         "🤖 Smart Task Manager Agent": "🤖 Agente Inteligente de Tareas",
         "🔐 Sign In / Register": "🔐 Iniciar Sesión / Registrarse",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **Modo Invitado**: Tus tareas son visibles para otros. Inicia sesión para asegurar tus datos.",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "Como invitado, no puedes usar el asistente de IA, guardar tareas ni ver archivos.",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **Modo Invitado**: Todas las funciones están habilitadas, pero no se guardarán datos para el futuro.",
         "📋 Tasks & AI Agent": "📋 Tareas y Agente de IA",
         "⏱️ Daily Routines & Punctuality": "⏱️ Rutinas Diarias y Puntualidad",
         "📝 Task Editor": "📝 Editor de Tareas",
@@ -318,8 +316,7 @@ TRANSLATIONS = {
     "Mandarin Chinese": {
         "🤖 Smart Task Manager Agent": "🤖 智能任务管家",
         "🔐 Sign In / Register": "🔐 登录 / 注册",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **访客模式**：您的任务对他人可见。请登录以保护您的数据。",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "作为访客，您无法使用AI助手、保存任务或查看存档。",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **访客模式**：所有功能均已启用，但不会为将来保存任何数据。",
         "📋 Tasks & AI Agent": "📋 任务 & AI 代理",
         "⏱️ Daily Routines & Punctuality": "⏱️ 日常作息 & 准时度",
         "📝 Task Editor": "📝 任务编辑器",
@@ -476,8 +473,7 @@ TRANSLATIONS = {
     "Standard Arabic": {
         "🤖 Smart Task Manager Agent": "🤖 مدير المهام الذكي",
         "🔐 Sign In / Register": "🔐 تسجيل الدخول / التسجيل",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **وضع الضيف**: مهامك مرئية للآخرين. يرجى تسجيل الدخول لتأمين بياناتك.",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "كضيف، لا يمكنك استخدام مساعد الذكاء الاصطناعي، حفظ المهام، أو عرض الأرشيف.",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **وضع الضيف**: جميع الميزات مفعلة، ولكن لن يتم حفظ أي بيانات للمستقبل.",
         "📋 Tasks & AI Agent": "📋 المهام ووكيل الذكاء الاصطناعي",
         "⏱️ Daily Routines & Punctuality": "⏱️ الروتين اليومي والالتزام بالمواعيد",
         "📝 Task Editor": "📝 محرر المهام",
@@ -634,8 +630,7 @@ TRANSLATIONS = {
     "French": {
         "🤖 Smart Task Manager Agent": "🤖 Agent Intelligent de Tâches",
         "🔐 Sign In / Register": "🔐 Se connecter / S'inscrire",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **Mode Invité** : Vos tâches sont visibles par les autres. Connectez-vous pour sécuriser vos données.",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "En tant qu'invité, vous ne pouvez pas utiliser l'assistant IA, enregistrer des tâches ou voir les archives.",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **Mode Invité** : Toutes les fonctionnalités sont activées, mais aucune donnée ne sera sauvegardée pour le futur.",
         "📋 Tasks & AI Agent": "📋 Tâches & Agent IA",
         "⏱️ Daily Routines & Punctuality": "⏱️ Routines Quotidiennes & Ponctualité",
         "📝 Task Editor": "📝 Éditeur de Tâches",
@@ -792,8 +787,7 @@ TRANSLATIONS = {
     "Bengali": {
         "🤖 Smart Task Manager Agent": "🤖 স্মার্ট টাস্ক ম্যানেজার",
         "🔐 Sign In / Register": "🔐 সাইন ইন / রেজিস্টার",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **গেস্ট মোড**: আপনার কাজ অন্যদের কাছে দৃশ্যমান। ডেটা সুরক্ষিত করতে লগইন করুন।",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "গেস্ট হিসাবে আপনি এআই সহকারী ব্যবহার, কাজ সেভ বা আর্কাইভ দেখতে পারবেন না।",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **গেস্ট মোড**: সমস্ত বৈশিষ্ট্য সক্ষম করা হয়েছে, তবে ভবিষ্যতের জন্য কোনও ডেটা সংরক্ষণ করা হবে না।",
         "📋 Tasks & AI Agent": "📋 কাজ ও এআই এজেন্ট",
         "⏱️ Daily Routines & Punctuality": "⏱️ দৈনন্দিন রুটিন ও সময়ানুবর্তিতা",
         "📝 Task Editor": "📝 টাস্ক এডিটর",
@@ -950,8 +944,7 @@ TRANSLATIONS = {
     "Portuguese": {
         "🤖 Smart Task Manager Agent": "🤖 Gerenciador de Tarefas Inteligente",
         "🔐 Sign In / Register": "🔐 Entrar / Registrar",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **Modo Convidado**: Suas tarefas são visíveis para outros. Faça login para proteger seus dados.",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "Como convidado, você não pode usar o assistente de IA, salvar tarefas ou visualizar arquivos.",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **Modo Convidado**: Todos os recursos estão ativados, mas nenhum dado será salvo para o futuro.",
         "📋 Tasks & AI Agent": "📋 Tarefas e Agente de IA",
         "⏱️ Daily Routines & Punctuality": "⏱️ Rotinas Diárias e Pontualidade",
         "📝 Task Editor": "📝 Editor de Tarefas",
@@ -1108,8 +1101,7 @@ TRANSLATIONS = {
     "Russian": {
         "🤖 Smart Task Manager Agent": "🤖 Умный Менеджер Задач",
         "🔐 Sign In / Register": "🔐 Войти / Регистрация",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **Гостевой режим**: Ваши задачи видны другим. Войдите, чтобы защитить свои данные.",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "В качестве гостя вы не можете использовать ИИ-помощника, сохранять задачи или просматривать архивы.",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **Гостевой режим**: Все функции включены, но данные не будут сохранены для будущего.",
         "📋 Tasks & AI Agent": "📋 Задачи и ИИ-Агент",
         "⏱️ Daily Routines & Punctuality": "⏱️ Режимы дня и Пунктуальность",
         "📝 Task Editor": "📝 Редактор Задач",
@@ -1266,8 +1258,7 @@ TRANSLATIONS = {
     "Urdu": {
         "🤖 Smart Task Manager Agent": "🤖 سمارٹ ٹاسک مینیجر",
         "🔐 Sign In / Register": "🔐 سائن ان / رجسٹر",
-        "⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.": "⚠️ **گیسٹ موڈ**: آپ کے کام دوسروں کو نظر آتے ہیں۔ اپنا ڈیٹا محفوظ کرنے کے لیے لاگ ان کریں۔",
-        "As a guest, you cannot use the AI assistant, save tasks, or view archives.": "بطور مہمان، آپ اے آئی اسسٹنٹ استعمال نہیں کر سکتے، کام محفوظ نہیں کر سکتے، یا آرکائیو نہیں دیکھ سکتے۔",
+        "⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.": "⚠️ **گیسٹ موڈ**: تمام فیچرز فعال ہیں، لیکن مستقبل کے لیے کوئی ڈیٹا محفوظ نہیں کیا جائے گا۔",
         "📋 Tasks & AI Agent": "📋 ٹاسکس اور اے آئی ایجنٹ",
         "⏱️ Daily Routines & Punctuality": "⏱️ روزانہ کی روٹین اور وقت کی پابندی",
         "📝 Task Editor": "📝 ٹاسک ایڈیٹر",

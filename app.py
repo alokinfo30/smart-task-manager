@@ -58,8 +58,18 @@ from agent import run_autonomous_agent, save_chat_state, load_chat_state, clear_
 import tools # Import the whole module to access context
 from auth import SessionManager, PasswordHandler, PasswordDB, AuthenticationError, SECURITY_QUESTIONS
 from translations import get_text
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from backend.database import SyncSessionLocal, TaskDB, ExpenseDB, UserDB, SessionDB
 
 load_dotenv()
+
+TTS_LANG_MAP = {
+    "English": "en-US", "Spanish": "es-ES", "Hindi": "hi-IN",
+    "Mandarin Chinese": "zh-CN", "Standard Arabic": "ar-SA",
+    "French": "fr-FR", "Bengali": "bn-IN", "Portuguese": "pt-BR",
+    "Russian": "ru-RU", "Urdu": "ur-PK"
+}
 
 # --- Pusher Client for Real-Time Sync ---
 pusher_client = None
@@ -98,9 +108,7 @@ def get_google_login_url():
     hashed = hashlib.sha256(code_verifier.encode('ascii')).digest()
     code_challenge = base64.urlsafe_b64encode(hashed).decode('ascii').rstrip('=')
     
-    db = SessionManager.load()
-    db[f"oauth_{state}"] = code_verifier
-    SessionManager.save(db)
+    SessionManager.set_oauth_state(state, code_verifier)
     
     params = {
         "response_type": "code",
@@ -132,11 +140,9 @@ def render_pusher_client():
     
     pusher_key = os.getenv("PUSHER_KEY")
     pusher_cluster = os.getenv("PUSHER_CLUSTER")
-    beams_instance_id = os.getenv("PUSHER_BEAMS_INSTANCE_ID", "3005694d-c9a2-4cc9-a1b7-fd96d3e6d03a")
 
     js = f"""
     <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
-    <script src="https://js.pusher.com/beams/2.1.0/push-notifications-cdn.js"></script>
     <script>
         if (!window.pusherSubscribed) {{
             Pusher.logToConsole = false;
@@ -153,21 +159,12 @@ def render_pusher_client():
             }});
             window.pusherSubscribed = true;
         }}
-
-        if (!window.beamsInitialized) {{
-            const beamsClient = new PusherPushNotifications.Client({{
-                instanceId: '{beams_instance_id}',
-            }});
-
-            beamsClient.start()
-                .then(() => beamsClient.addDeviceInterest('hello'))
-                .then(() => console.log('Successfully registered and subscribed!'))
-                .catch(console.error);
-            window.beamsInitialized = true;
-        }}
     </script>
     """
-    st.html(js)
+    
+    # Using components.html with height=0 keeps the iframe persistent across Streamlit 
+    # reruns, preventing the WebSocket from being continuously destroyed and re-established.
+    components.html(js, height=0)
 
 def parse_task_name_from_prompt(prompt: str) -> str | None:
     """Extract a direct task name from an explicit add-task request."""
@@ -242,9 +239,9 @@ def create_pdf(text: str):
 def mask_mobile(mobile):
     """Helper to mask mobile numbers or emails for privacy."""
     val = str(mobile).strip()
-    if not val or val.lower() == "nan" or val.lower() == "guest":
-        return "guest" if val.lower() == "guest" else ""
-    if val.lower() == "demo_user":
+    if not val or val.lower() == "nan" or val.lower().startswith("guest"):
+        return "guest" if val.lower().startswith("guest") else ""
+    if val.lower() == "demo_user" or val.lower().startswith("demo_"):
         return "Demo User"
         
     # Handle email masking if logged in via SSO
@@ -303,11 +300,7 @@ def init_session_state():
                 try:
                     code_verifier = None
                     if state:
-                        db = SessionManager.load()
-                        code_verifier = db.get(f"oauth_{state}")
-                        if f"oauth_{state}" in db:
-                            del db[f"oauth_{state}"]
-                            SessionManager.save(db)
+                        code_verifier = SessionManager.get_and_clear_oauth_state(state)
                             
                     token_url = "https://oauth2.googleapis.com/token"
                     payload = {
@@ -331,12 +324,8 @@ def init_session_state():
                             user_info = user_res.json()
                             user_id = user_info.get("email") or user_info.get("nickname") or user_info.get("sub")
                             if user_id:
-                                st.session_state.current_user = user_id
-                                st.session_state.auth_method = "Google SSO"
+                                st.session_state.sso_email = user_id
                                 st.query_params.clear()
-                                # Create a persistent session token for the Google user
-                                token = SessionManager.create_session(user_id)
-                                st.query_params["u"] = token
                                 st.rerun()
                         else:
                             st.error(f"Google UserInfo Error: {user_res.text}")
@@ -368,75 +357,38 @@ def init_session_state():
                 else:
                     st.session_state.auth_method = "Google SSO"
             else:
-                st.session_state.current_user = "guest"
+                if "guest_id" not in st.session_state:
+                    st.session_state.guest_id = f"guest_{uuid.uuid4().hex[:8]}"
+                st.session_state.current_user = st.session_state.guest_id
         else:
-            st.session_state.current_user = "guest"
+            if "guest_id" not in st.session_state:
+                st.session_state.guest_id = f"guest_{uuid.uuid4().hex[:8]}"
+            st.session_state.current_user = st.session_state.guest_id
 
 def load_todo_df(current_user):
     """Loads the todo list into a DataFrame, handles 24h deletion, and sorts."""
-    required_cols = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
+    required_cols = ["id", "Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
 
     try:
-        if os.path.exists(tools.TODO_FILE):
-            df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
-        else:
-            df = pd.DataFrame(columns=required_cols)
+        with SyncSessionLocal() as session:
+            tasks = session.query(TaskDB).all()
+        data = []
+        for t in tasks:
+            if t.owner == current_user or (not current_user.startswith('guest') and not current_user.startswith('demo_') and current_user in [s.strip() for s in str(t.shared_with or "").split(',')]):
+                data.append({
+                    "id": t.id, "Date": t.date, "Task": t.task, "Status": t.status,
+                    "Priority": t.priority, "CompletedAt": t.completed_at,
+                    "Owner": t.owner, "SharedWith": t.shared_with
+                })
+        df = pd.DataFrame(data, columns=required_cols)
     except Exception:
         df = pd.DataFrame(columns=required_cols)
-
-    if 'Time' in df.columns:
-        df = df.drop(columns=['Time'])
-
-    # Ensure required columns exist with safe defaults and proper dtypes
-    for col in required_cols:
-        if col not in df.columns:
-            if col == 'Priority':
-                df[col] = 'High'
-            elif col == 'Owner':
-                df[col] = current_user
-            elif col == 'SharedWith':
-                df[col] = ''
-            elif col == 'Date':
-                # Use NaT-aware dtype
-                df[col] = pd.Series([pd.NaT] * len(df))
-            elif col == 'CompletedAt':
-                df[col] = pd.Series([pd.NaT] * len(df))
-            else:
-                df[col] = None
-
-    # Normalize Owner and SharedWith to string to avoid float inference
-    df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
-    df['SharedWith'] = df['SharedWith'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
 
     # Convert CompletedAt to datetime safely
     try:
         df['CompletedAt'] = pd.to_datetime(df['CompletedAt'], errors='coerce')
     except Exception:
         df['CompletedAt'] = pd.to_datetime(pd.Series([pd.NaT] * len(df)))
-
-    # --- Logic: Auto-delete "Done" tasks after 24 hours ---
-    if not df.empty:
-        cutoff = datetime.now() - timedelta(hours=24)
-        mask = (df['Status'] == 'Done') & (df['CompletedAt'].notna()) & (df['CompletedAt'] < cutoff)
-        if mask.any():
-            # Filter in memory only to prevent Rerun Loop on production
-            df = df[~mask]
-
-    # Privacy Filtering: owner OR explicitly shared. Guests only see their own tasks.
-    def is_visible(row):
-        try:
-            if row.get('Owner') == current_user:
-                return True
-            if current_user == "guest":
-                return False
-            shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
-            return current_user in shared_list
-        except Exception:
-            return False
-
-    if not df.empty:
-        user_mask = df.apply(is_visible, axis=1)
-        df = df[user_mask].copy()
 
     # Ensure Date column exists and convert to date objects for Streamlit
     if 'Date' not in df.columns:
@@ -461,26 +413,17 @@ def load_todo_df(current_user):
 
 def load_expenses_df(current_user):
     """Loads the expenses list into a DataFrame."""
-    required_cols = ["Date", "Amount", "Category", "Description", "Owner"]
+    required_cols = ["id", "Date", "Amount", "Category", "Description", "Owner"]
 
     try:
-        if os.path.exists(tools.EXPENSES_FILE):
-            df = pd.read_csv(tools.EXPENSES_FILE, dtype={'Owner': str})
-        else:
-            df = pd.DataFrame(columns=required_cols)
+        with SyncSessionLocal() as session:
+            expenses = session.query(ExpenseDB).filter(ExpenseDB.owner == current_user).all()
+        data = [{"id": e.id, "Date": e.date, "Amount": e.amount, "Category": e.category, "Description": e.description, "Owner": e.owner} for e in expenses]
+        df = pd.DataFrame(data, columns=required_cols)
     except Exception:
         df = pd.DataFrame(columns=required_cols)
 
-    for col in required_cols:
-        if col not in df.columns:
-            if col == 'Owner': df[col] = current_user
-            elif col == 'Amount': df[col] = 0.0
-            else: df[col] = ""
-
-    df['Owner'] = df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
-    
     if not df.empty:
-        df = df[df['Owner'] == current_user].copy()
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
         df = df.sort_values(by="Date", ascending=False).reset_index(drop=True)
@@ -494,13 +437,51 @@ def render_auth_ui():
     language_options = ["English", "Mandarin Chinese", "Hindi", "Spanish", "Standard Arabic", "French", "Bengali", "Portuguese", "Russian", "Urdu"]
     st.sidebar.selectbox(get_text("🌐 Language / भाषा / Idioma", lang), language_options, key="language")
     lang = st.session_state.language # Refresh after selection change
+    st.sidebar.checkbox(get_text("🔊 Enable Voice (TTS)", lang), value=True, key="tts_enabled")
     st.sidebar.title(get_text("🔐 Sign In / Register", lang))
     
-    if st.session_state.current_user == "guest":
+    if st.session_state.current_user.startswith("guest"):
+        if "sso_email" in st.session_state:
+            st.sidebar.subheader("Complete Your Profile")
+            st.sidebar.info(f"Linked Email: {st.session_state.sso_email}\n\nPlease set up your Mobile Number, PIN, and Security Question to complete registration and enable PIN recovery.")
+            
+            sso_mobile = st.sidebar.text_input("Mobile Number", placeholder="e.g. 9876543210")
+            sso_pin = st.sidebar.text_input("6-Digit PIN", type="password")
+            sso_q = st.sidebar.selectbox("Security Question", SECURITY_QUESTIONS)
+            sso_a = st.sidebar.text_input("Answer")
+            
+            if st.sidebar.button("Complete Registration", width="stretch"):
+                try:
+                    if PasswordHandler.register(sso_mobile, sso_pin, sso_q, sso_a):
+                        st.session_state.current_user = sso_mobile
+                        st.session_state.auth_method = "Google SSO"
+                        del st.session_state.sso_email
+                        token = SessionManager.create_session(sso_mobile)
+                        st.query_params["u"] = token
+                        st.rerun()
+                except AuthenticationError as e:
+                    if "already exists" in str(e).lower():
+                        try:
+                            if PasswordHandler.login(sso_mobile, sso_pin):
+                                st.session_state.current_user = sso_mobile
+                                st.session_state.auth_method = "Google SSO"
+                                del st.session_state.sso_email
+                                token = SessionManager.create_session(sso_mobile)
+                                st.query_params["u"] = token
+                                st.rerun()
+                        except AuthenticationError as le:
+                            st.sidebar.error("Mobile already exists. Incorrect PIN to link account.")
+                    else:
+                        st.sidebar.error(str(e))
+            if st.sidebar.button("Cancel", width="stretch"):
+                del st.session_state.sso_email
+                st.rerun()
+            return "guest"
+
         st.sidebar.subheader(get_text("🚀 Quick Test", lang))
         st.sidebar.info(get_text("Want to test features without registering?", lang))
         if st.sidebar.button(get_text("Login as Demo User", lang), width="stretch"):
-            st.session_state.current_user = "demo_user"
+            st.session_state.current_user = f"demo_{uuid.uuid4().hex[:8]}"
             st.session_state.auth_method = "Demo"
             st.rerun()
             
@@ -534,7 +515,7 @@ def render_auth_ui():
             wasm_html = """
             <div id="wasm-ai-container" style="font-family: sans-serif;">
                 <div id="status" style="padding: 10px; background: #e8f4f8; border-radius: 5px; margin-bottom: 10px; font-size: 14px;">
-                    Checking requirements...
+                    <button id="init-btn" style="background: #2196F3; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;">📥 Download & Start Local Engine (~1.5GB)</button>
                 </div>
                 <textarea id="prompt-input" style="width: 100%; height: 80px; padding: 10px; border-radius: 5px; border: 1px solid #ccc; margin-bottom: 10px;" placeholder="Ask your local browser AI..."></textarea>
                 <button id="ask-btn" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;" disabled>Ask Local AI</button>
@@ -545,6 +526,7 @@ def render_auth_ui():
                 import { FilesetResolver, LlmInference } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai@0.10.14';
 
                 const statusEl = document.getElementById('status');
+                const initBtn = document.getElementById('init-btn');
                 const promptInput = document.getElementById('prompt-input');
                 const askBtn = document.getElementById('ask-btn');
                 const responseOut = document.getElementById('response-output');
@@ -580,6 +562,12 @@ def render_auth_ui():
                     }
                 }
 
+                if (initBtn) {
+                    initBtn.addEventListener('click', () => {
+                        initModel();
+                    });
+                }
+
                 askBtn.addEventListener('click', async () => {
                     if (!llmInference) return;
                     const text = promptInput.value.trim();
@@ -592,6 +580,14 @@ def render_auth_ui():
                     try {
                         const response = await llmInference.generateResponse(text);
                         responseOut.innerText = response;
+                        
+                        if (TTS_ENABLED_PLACEHOLDER && 'speechSynthesis' in window) {
+                            window.speechSynthesis.cancel();
+                            let cleanResponse = response.replace(/[*#_`~]/g, '');
+                            let msg = new SpeechSynthesisUtterance(cleanResponse);
+                            msg.lang = 'TTS_LANG_PLACEHOLDER';
+                            window.speechSynthesis.speak(msg);
+                        }
                     } catch (e) {
                         responseOut.innerText = "Error generating response: " + e.message;
                     } finally {
@@ -599,10 +595,10 @@ def render_auth_ui():
                         askBtn.innerText = "Ask Local AI";
                     }
                 });
-
-                initModel();
             </script>
             """
+            wasm_html = wasm_html.replace("TTS_ENABLED_PLACEHOLDER", str(st.session_state.get("tts_enabled", True)).lower())
+            wasm_html = wasm_html.replace("TTS_LANG_PLACEHOLDER", TTS_LANG_MAP.get(lang, "en-US"))
             components.html(wasm_html, height=350, scrolling=True)
 
         # --- Desktop Offline AI (Ollama) Status ---
@@ -682,6 +678,47 @@ def render_auth_ui():
                 if st.button(get_text("Cancel", lang)):
                     st.session_state.forgot_pin_flow = False
                     st.rerun()
+                    
+        # --- Admin Panel ---
+        st.sidebar.divider()
+        with st.sidebar.expander("🛠️ Admin Panel", expanded=False):
+            if st.button("Wipe All Real Users", type="primary", use_container_width=True):
+                deleted_count = 0
+                deleted_mobiles = []
+                try:
+                    with SyncSessionLocal() as session:
+                        users = session.query(UserDB).all()
+                        for user in users:
+                            mobile = str(user.mobile)
+                            # Skip guest and demo accounts
+                            if not mobile.startswith('demo_') and not mobile.startswith('guest') and mobile != 'demo_user':
+                                session.delete(user)
+                                session.query(SessionDB).filter(SessionDB.mobile == mobile).delete(synchronize_session=False)
+                                session.query(TaskDB).filter(TaskDB.owner == mobile).delete(synchronize_session=False)
+                                session.query(ExpenseDB).filter(ExpenseDB.owner == mobile).delete(synchronize_session=False)
+                                deleted_mobiles.append(mobile)
+                                deleted_count += 1
+                        session.commit()
+
+                    for filepath in [ROUTINES_FILE, RECURRING_EXPENSES_FILE]:
+                        if os.path.exists(filepath):
+                            with open(filepath, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                            changed = False
+                            for mobile in deleted_mobiles:
+                                if mobile in data:
+                                    del data[mobile]
+                                    changed = True
+                            if changed:
+                                with open(filepath, 'w', encoding='utf-8') as f:
+                                    json.dump(data, f, indent=4)
+                    
+                    for mobile in deleted_mobiles:
+                        resume_file = f"resume_profile_{mobile}.txt"
+                        if os.path.exists(resume_file): os.remove(resume_file)
+                    st.success(f"Successfully wiped {deleted_count} real user(s) and their data.")
+                except Exception as e:
+                    st.error(f"Error wiping users: {str(e)}")
             
         st.sidebar.divider()
         return "guest"
@@ -698,7 +735,29 @@ def render_auth_ui():
                 token = token_param[0] if isinstance(token_param, list) and token_param else token_param
                 SessionManager.clear_session(token)
                 
-            st.session_state.current_user = "guest"
+            # --- Cleanup Guest/Demo Data on Logout ---
+            if st.session_state.current_user.startswith("guest") or st.session_state.current_user.startswith("demo_"):
+                try:
+                    with SyncSessionLocal() as session:
+                        session.query(TaskDB).filter(TaskDB.owner == st.session_state.current_user).delete(synchronize_session=False)
+                        session.query(ExpenseDB).filter(ExpenseDB.owner == st.session_state.current_user).delete(synchronize_session=False)
+                        session.commit()
+                    
+                    r_data = load_routines_data()
+                    if st.session_state.current_user in r_data:
+                        del r_data[st.session_state.current_user]
+                        save_routines_data(r_data)
+                    re_data = load_recurring_expenses_data()
+                    if st.session_state.current_user in re_data:
+                        del re_data[st.session_state.current_user]
+                        save_recurring_expenses_data(re_data)
+                    p_file = f"resume_profile_{st.session_state.current_user}.txt"
+                    if os.path.exists(p_file): os.remove(p_file)
+                except Exception:
+                    pass
+            # -----------------------------------------
+            
+            st.session_state.current_user = f"guest_{uuid.uuid4().hex[:8]}"
             st.session_state.auth_method = None
             st.query_params.clear() # type: ignore
             st.rerun()
@@ -773,12 +832,33 @@ def main():
         st.error("🔑 **Action Required**: Please set the `GOOGLE_API_KEY` environment variable to enable Agentic AI features.")
     
     # Guest Account Warning
-    if current_user == "guest":
-        st.warning(get_text("⚠️  **Guest Mode**: Your tasks are visible to others. Please login to secure your data.", st.session_state.language))
-        st.info(get_text("As a guest, you cannot use the AI assistant, save tasks, or view archives.", st.session_state.language))
+    if current_user.startswith("guest") or current_user.startswith("demo_"):
+        st.warning(get_text("⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.", st.session_state.language))
 
 
     render_dashboard(current_user)
+
+    # Global Text-to-Speech (TTS) Engine
+    if not st.session_state.get("tts_enabled", True):
+        # Instantly mute any ongoing browser speech if the user disables the toggle
+        st.html("<script>if ('speechSynthesis' in window) { window.speechSynthesis.cancel(); }</script>")
+    elif "speak_text" in st.session_state:
+        # Remove markdown formatting for cleaner speech synthesis
+        clean_text = re.sub(r'[*#_`~]', '', st.session_state.speak_text)
+        safe_text = json.dumps(clean_text)
+        tts_lang = TTS_LANG_MAP.get(st.session_state.language, "en-US")
+        tts_js = f"""
+        <script>
+            if ('speechSynthesis' in window) {{
+                window.speechSynthesis.cancel();
+                var msg = new SpeechSynthesisUtterance({safe_text});
+                msg.lang = '{tts_lang}';
+                window.speechSynthesis.speak(msg);
+            }}
+        </script>
+        """
+        st.html(tts_js)
+        del st.session_state.speak_text
 
 def style_status(row):
     color = ''
@@ -937,8 +1017,6 @@ def send_routine_notifications(routine_name, time_str, action):
 
 def check_routine_alerts(current_user):
     """Displays global alerts for check-ins/outs based on time."""
-    if current_user == "guest":
-        return
         
     data = load_routines_data()
     if current_user not in data:
@@ -1078,9 +1156,6 @@ def check_routine_alerts(current_user):
 def render_routines(current_user):
     """Renders the Daily Routines and Punctuality tracker."""
     lang = st.session_state.language
-    if current_user == "guest":
-        st.info(get_text("Please log in to manage your daily routines and punctuality.", lang))
-        return
 
     st.header(get_text("⏱️ Daily Routines & Time Tracking", lang))
     st.markdown(get_text("Track your daily habits like morning walks, job hours, and personal time. Be punctual to earn a high productivity score!", lang))
@@ -1272,11 +1347,10 @@ def render_dashboard(current_user):
     required_cols_for_metrics = ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
     df = pd.DataFrame(columns=required_cols_for_metrics)
     
-    if current_user != "guest":
-        df = load_todo_df(current_user)
+    df = load_todo_df(current_user)
 
     # 1. Dashboard Metrics (Hide completely if guest or empty)
-    if current_user != "guest" and not df.empty:
+    if not df.empty:
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric(get_text("Total", lang), len(df))
         m2.metric(get_text("Pending ⏳", lang), len(df[df["Status"] == "Pending"]))
@@ -1316,23 +1390,18 @@ def render_dashboard(current_user):
             display_df = display_df[display_df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)]
 
         with st.expander(get_text("👀 Live Status Overview", lang), expanded=True):
-            if current_user == "guest":
-                st.info(get_text("Please log in to view your live status overview.", lang))
-            else:
-                st.data_editor(
-                    display_df.style.apply(style_status, axis=1),
-                    width='stretch',
-                    hide_index=True,
-                    disabled=[col for col in display_df.columns if col != "👁️"],
-                    column_config={"👁️": st.column_config.CheckboxColumn("👁️", default=False, width="small", help="Reveal mobile numbers")},
-                    key="overview_table"
-                )
+            st.data_editor(
+                display_df.style.apply(style_status, axis=1),
+                width='stretch',
+                hide_index=True,
+                disabled=[col for col in display_df.columns if col != "👁️"],
+                column_config={"👁️": st.column_config.CheckboxColumn("👁️", default=False, width="small", help="Reveal mobile numbers")},
+                key="overview_table"
+            )
         
         # Replace Task Distribution with Motivational Gamification System
         with st.expander(get_text("🏆 Productivity Rank & Quick Wins", lang), expanded=True):
-            if current_user == "guest":
-                st.info(get_text("Please log in to view your productivity rank and quick wins.", lang))
-            elif not df.empty:
+            if not df.empty:
                 done_count = len(df[df["Status"] == "Done"])
                 total_count = len(df)
                 efficiency = (done_count / total_count) * 100
@@ -1375,11 +1444,8 @@ def render_dashboard(current_user):
     with col1:
         st.subheader(get_text("📝 Task Editor", st.session_state.language))
         
-        if current_user == "guest":
-            st.info(get_text("Please log in to view and edit your tasks.", lang))
-
         # Add a button to explicitly add a new task
-        if st.button(get_text("➕ Add New Task", st.session_state.language), width="stretch", disabled=(current_user == "guest")):
+        if st.button(get_text("➕ Add New Task", st.session_state.language), width="stretch"):
             # Use the centralized tool function to handle locking and formatting correctly
             status_msg = tools.add_task(task="New task...", priority="High", owner=current_user)
             if "Success" not in status_msg:
@@ -1422,8 +1488,9 @@ def render_dashboard(current_user):
 
         edited_df = st.data_editor(
             df_editor,
-            disabled=(current_user == "guest"),
+            disabled=False,
             column_config={
+                    "id": None,
                 "🗑️": st.column_config.CheckboxColumn(get_text("Delete?", lang), default=False, width="small"),
                 "👁️": st.column_config.CheckboxColumn("👁️", default=False, width="small", help="Reveal mobile numbers"),
                 "Status": st.column_config.SelectboxColumn(
@@ -1449,7 +1516,7 @@ def render_dashboard(current_user):
         )
 
         btn_col1, btn_col2 = st.columns(2)
-        if btn_col1.button(get_text("💾 Save Changes", st.session_state.language), width="stretch", disabled=(current_user == "guest")):
+        if btn_col1.button(get_text("💾 Save Changes", st.session_state.language), width="stretch"):
             # Validate shared accounts before saving
             validation_error = None
             db = PasswordDB.load()
@@ -1504,56 +1571,58 @@ def render_dashboard(current_user):
                         save_df.at[idx, 'CompletedAt'] = None
                 
                 # Reload full file to ensure we don't overwrite other users' data
+                with tools.file_lock:
+                    if os.path.exists(tools.TODO_FILE):
+                        full_df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
+                        # Ensure required columns exist to avoid KeyError during filtering or processing
+                        for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
+                            if col not in full_df.columns:
+                                if col == "Priority": full_df[col] = "High"
+                                elif col == "Owner": full_df[col] = "guest"
+                                elif col == "SharedWith": full_df[col] = ""
+                                else: full_df[col] = None
+                        # Cast to string to prevent type mismatch during concat or editing
+                        full_df['Owner'] = full_df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+                        full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+                    else:
+                        full_df = pd.DataFrame(columns=save_df.columns)
+                    
+                    # Logic: Identify rows that belong to the user's view (owned or shared)
+                    def check_persistence(row):
+                        if row['Owner'] == current_user: return True
+                        shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
+                        return current_user in shared_list and not current_user.startswith('guest') and not current_user.startswith('demo_')
+        
+                    visible_mask = full_df.apply(check_persistence, axis=1)
+                    others_tasks = full_df[~visible_mask]
+                    
+                    final_df = pd.concat([others_tasks, save_df], ignore_index=True)
+                    final_df.to_csv(tools.TODO_FILE, index=False)
+                broadcast_update()
+                st.success(get_text("Tasks saved and automatically sorted!", lang))
+                st.rerun() # Rerun to reflect changes in the UI and metrics
+            
+        if btn_col2.button(get_text("🗑️ Clear Done", st.session_state.language), width="stretch"):
+            with tools.file_lock:
                 if os.path.exists(tools.TODO_FILE):
                     full_df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
-                    # Ensure required columns exist to avoid KeyError during filtering or processing
+                    # Ensure required columns exist to avoid KeyError: 'Owner'
                     for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
                         if col not in full_df.columns:
                             if col == "Priority": full_df[col] = "High"
                             elif col == "Owner": full_df[col] = "guest"
                             elif col == "SharedWith": full_df[col] = ""
                             else: full_df[col] = None
-                    # Cast to string to prevent type mismatch during concat or editing
+                            
+                    # Cast to string to prevent type mismatch
                     full_df['Owner'] = full_df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
                     full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
-                else:
-                    full_df = pd.DataFrame(columns=save_df.columns)
-                
-                # Logic: Identify rows that belong to the user's view (owned or shared)
-                def check_persistence(row):
-                    if row['Owner'] == current_user: return True
-                    shared_list = [s.strip() for s in str(row.get('SharedWith', '')).split(',') if s.strip()]
-                    return current_user in shared_list and current_user != 'guest'
     
-                visible_mask = full_df.apply(check_persistence, axis=1)
-                others_tasks = full_df[~visible_mask]
-                
-                final_df = pd.concat([others_tasks, save_df], ignore_index=True)
-                final_df.to_csv(tools.TODO_FILE, index=False)
-                broadcast_update()
-                st.success(get_text("Tasks saved and automatically sorted!", lang))
-                st.rerun() # Rerun to reflect changes in the UI and metrics
-            
-        if btn_col2.button(get_text("🗑️ Clear Done", st.session_state.language), width="stretch", disabled=(current_user == "guest")):
-            if os.path.exists(tools.TODO_FILE):
-                full_df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
-                # Ensure required columns exist to avoid KeyError: 'Owner'
-                for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
-                    if col not in full_df.columns:
-                        if col == "Priority": full_df[col] = "High"
-                        elif col == "Owner": full_df[col] = "guest"
-                        elif col == "SharedWith": full_df[col] = ""
-                        else: full_df[col] = None
-                        
-                # Cast to string to prevent type mismatch
-                full_df['Owner'] = full_df['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
-                full_df['SharedWith'] = full_df['SharedWith'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
-
-                # Keep tasks not owned by user OR tasks owned by user that are NOT Done
-                mask = (full_df['Owner'] != current_user) | (full_df['Status'] != 'Done')
-                final_df = full_df[mask]
-                final_df.to_csv(tools.TODO_FILE, index=False)
-                broadcast_update()
+                    # Keep tasks not owned by user OR tasks owned by user that are NOT Done
+                    mask = (full_df['Owner'] != current_user) | (full_df['Status'] != 'Done')
+                    final_df = full_df[mask]
+                    final_df.to_csv(tools.TODO_FILE, index=False)
+            broadcast_update()
             
             st.toast(get_text("Completed tasks archived.", lang))
             st.rerun()
@@ -1568,9 +1637,6 @@ def render_dashboard(current_user):
             st.session_state.chat_display = state.get("chat_display", [])
             st.session_state.last_loaded_user = current_user
 
-        if current_user == "guest":
-            st.info(get_text("Please log in to use the AI assistant.", lang))
-            
         # Display previous conversation
         chat_container = st.container(height=300, border=True)
         for i, msg in enumerate(st.session_state.chat_display):
@@ -1580,7 +1646,7 @@ def render_dashboard(current_user):
                 # Check last 2 messages if conversation complete, else only check the last 1 pending user message
                 is_current = i >= (len(st.session_state.chat_display) - (2 if len(st.session_state.chat_display) % 2 == 0 else 1))
                 suffix = st.session_state.get("checkbox_suffix", 0)
-                col_sel.checkbox("💾", key=f"sel_{i}_{suffix}", value=is_current, help="Select for archival", label_visibility="collapsed", disabled=(current_user == "guest"))
+                col_sel.checkbox("💾", key=f"sel_{i}_{suffix}", value=is_current, help="Select for archival", label_visibility="collapsed")
 
         # Handle pending AI processing after the UI has updated and cleared old checkboxes
         if "pending_agent_prompt" in st.session_state:
@@ -1601,129 +1667,121 @@ def render_dashboard(current_user):
                         "archived": False
                     })
                     save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
+                    st.session_state.speak_text = report_content
             st.rerun()
 
         prompt_clicked = None
-        if current_user != "guest":
-            st.caption(get_text("💡 Quick Prompts:", lang))
-            pc1, pc2 = st.columns(2)
-            if pc1.button(get_text("📊 Analyze workload", lang), width="stretch"): prompt_clicked = "Analyze my current workload"
-            if pc2.button(get_text("🎯 Suggest priorities", lang), width="stretch"): prompt_clicked = "Suggest priorities for today"
-            if pc1.button(get_text("🧩 Break down a task", lang), width="stretch"): prompt_clicked = "Break down a complex task"
-            if pc2.button(get_text("📝 Create daily summary", lang), width="stretch"): prompt_clicked = "Create a daily technical summary"
+        st.caption(get_text("💡 Quick Prompts:", lang))
+        pc1, pc2 = st.columns(2)
+        if pc1.button(get_text("📊 Analyze workload", lang), width="stretch"): prompt_clicked = "Analyze my current workload"
+        if pc2.button(get_text("🎯 Suggest priorities", lang), width="stretch"): prompt_clicked = "Suggest priorities for today"
+        if pc1.button(get_text("🧩 Break down a task", lang), width="stretch"): prompt_clicked = "Break down a complex task"
+        if pc2.button(get_text("📝 Create daily summary", lang), width="stretch"): prompt_clicked = "Create a daily technical summary"
 
-        user_command = st.chat_input(get_text("Ask your assistant...", st.session_state.language), disabled=(current_user == "guest"))
+        user_command = st.chat_input(get_text("Ask your assistant...", st.session_state.language))
         
         final_command = user_command or prompt_clicked
         
         if final_command:
-            if current_user == "guest":
-                st.error(get_text("Please log in to use the AI assistant.", lang))
-            else:
-                # Forcefully uncheck previous messages by rendering fresh keys
-                st.session_state.checkbox_suffix = st.session_state.get("checkbox_suffix", 0) + 1
-                final_prompt = final_command
+            # Forcefully uncheck previous messages by rendering fresh keys
+            st.session_state.checkbox_suffix = st.session_state.get("checkbox_suffix", 0) + 1
+            final_prompt = final_command
+            st.session_state.chat_display.append({
+                "role": "user", 
+                "content": final_prompt,
+                "timestamp": datetime.now().isoformat(),
+                "archived": False
+            })
+
+            # Detect explicit task-creation commands and persist directly.
+            task_name = parse_task_name_from_prompt(final_prompt)
+            if task_name:
+                status_msg = tools.add_task(task=task_name, priority="High", owner=current_user)
+                if "Success" in status_msg:
+                    assistant_text = f"✅ Added task '{task_name}' with High priority for today."
+                else:
+                    assistant_text = f"❌ Failed to add task: {status_msg}"
                 st.session_state.chat_display.append({
-                    "role": "user", 
-                    "content": final_prompt,
+                    "role": "assistant",
+                    "content": assistant_text,
                     "timestamp": datetime.now().isoformat(),
                     "archived": False
                 })
+                save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
+                st.session_state.speak_text = assistant_text
+                st.rerun()
 
-                # Detect explicit task-creation commands and persist directly.
-                task_name = parse_task_name_from_prompt(final_prompt)
-                if task_name:
-                    status_msg = tools.add_task(task=task_name, priority="High", owner=current_user)
-                    if "Success" in status_msg:
-                        assistant_text = f"✅ Added task '{task_name}' with High priority for today."
-                    else:
-                        assistant_text = f"❌ Failed to add task: {status_msg}"
-                    st.session_state.chat_display.append({
-                        "role": "assistant",
-                        "content": assistant_text,
-                        "timestamp": datetime.now().isoformat(),
-                        "archived": False
-                    })
-                    save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
-                    st.rerun()
-
-                # Continue through normal AI agent flow when the prompt is not a direct add-task command.
-                else:
-                    # Queue agent for execution and trigger an immediate rerun to uncheck previous UI elements
-                    st.session_state.pending_agent_prompt = final_prompt
-                    st.rerun()
+            # Continue through normal AI agent flow when the prompt is not a direct add-task command.
+            else:
+                # Queue agent for execution and trigger an immediate rerun to uncheck previous UI elements
+                st.session_state.pending_agent_prompt = final_prompt
+                st.rerun()
 
         if st.session_state.chat_display:
-            if current_user == "guest":
-                st.info(get_text("Please log in to use the AI assistant.", lang))
-            else:
-                # Allow users to selectively save messages for future reference
-                if st.button(get_text("💾 Archive Selected Messages", lang), width="stretch"):
-                    suffix = st.session_state.get("checkbox_suffix", 0)
-                    selected_indices = [i for i, msg in enumerate(st.session_state.chat_display) if st.session_state.get(f"sel_{i}_{suffix}", False)]
-                    
-                    if selected_indices:
-                        selected_msgs = [
-                            f"{st.session_state.chat_display[i]['role'].upper()}: {st.session_state.chat_display[i]['content']}" 
-                            for i in selected_indices
-                        ]
-                        archive_content = "\n".join(selected_msgs)
-                        status_msg = tools.log_report(archive_content)
+            # Allow users to selectively save messages for future reference
+            if st.button(get_text("💾 Archive Selected Messages", lang), width="stretch"):
+                suffix = st.session_state.get("checkbox_suffix", 0)
+                selected_indices = [i for i, msg in enumerate(st.session_state.chat_display) if st.session_state.get(f"sel_{i}_{suffix}", False)]
+                
+                if selected_indices:
+                    selected_msgs = [
+                        f"{st.session_state.chat_display[i]['role'].upper()}: {st.session_state.chat_display[i]['content']}" 
+                        for i in selected_indices
+                    ]
+                    archive_content = "\n".join(selected_msgs)
+                    status_msg = tools.log_report(archive_content)
 
-                        if "Success" in status_msg:
-                            # Mark selected messages as archived in session state
-                            for i in selected_indices:
-                                st.session_state.chat_display[i]["archived"] = True
-                            
-                            # Persist the 'archived' status to disk
-                            save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
-                            
-                            # Forcefully uncheck messages after successful archival
-                            st.session_state.checkbox_suffix = suffix + 1
-                            st.toast(status_msg, icon="✅")
-                            time.sleep(1) # Allow user to see the confirmation
-                            st.rerun()
-                        else:
-                            st.error(status_msg)
+                    if "Success" in status_msg:
+                        # Mark selected messages as archived in session state
+                        for i in selected_indices:
+                            st.session_state.chat_display[i]["archived"] = True
+                        
+                        # Persist the 'archived' status to disk
+                        save_chat_state(st.session_state.agent_history, st.session_state.chat_display, current_user)
+                        
+                        # Forcefully uncheck messages after successful archival
+                        st.session_state.checkbox_suffix = suffix + 1
+                        st.toast(status_msg, icon="✅")
+                        time.sleep(1) # Allow user to see the confirmation
+                        st.rerun()
                     else:
-                        st.warning(get_text("No messages selected to archive.", lang))
+                        st.error(status_msg)
+                else:
+                    st.warning(get_text("No messages selected to archive.", lang))
 
-                if st.button(get_text("🗑️ Clear Chat History", lang), width="stretch"):
-                    st.session_state.agent_history = []
-                    st.session_state.chat_display = []
-                    # Reset keys since widgets are destroyed
-                    st.session_state.checkbox_suffix = st.session_state.get("checkbox_suffix", 0) + 1
-                    clear_chat_state(current_user)
-                    st.rerun()
+            if st.button(get_text("🗑️ Clear Chat History", lang), width="stretch"):
+                st.session_state.agent_history = []
+                st.session_state.chat_display = []
+                # Reset keys since widgets are destroyed
+                st.session_state.checkbox_suffix = st.session_state.get("checkbox_suffix", 0) + 1
+                clear_chat_state(current_user)
+                st.rerun()
 
         # Persistent Log Viewer
         st.divider()
         with st.expander(get_text("📖 View Persistent Archives", lang), expanded=False):
-            if current_user == "guest":
-                st.info(get_text("Please log in to view your archives.", lang))
+            archive_file_path = tools.get_archive_file_path(current_user)
+            if archive_file_path and os.path.exists(archive_file_path):
+                with open(archive_file_path, "r", encoding="utf-8") as f:
+                    archive_content = f.read()
+                
+                # Capture user edits from the text area
+                updated_archive = st.text_area(
+                    get_text("Archived Reports", lang), 
+                    archive_content, 
+                    height=400,
+                    key="archive_content_editor"
+                )
+                
+                # If changes are detected, show a Save button
+                if updated_archive != archive_content:
+                    if st.button(get_text("💾 Save Archive Changes", lang), width="stretch"):
+                        with open(archive_file_path, "w", encoding="utf-8") as f:
+                            f.write(updated_archive)
+                        st.success(get_text("Archive updated successfully!", lang))
+                        st.rerun()
             else:
-                archive_file_path = tools.get_archive_file_path(current_user)
-                if archive_file_path and os.path.exists(archive_file_path):
-                    with open(archive_file_path, "r", encoding="utf-8") as f:
-                        archive_content = f.read()
-                    
-                    # Capture user edits from the text area
-                    updated_archive = st.text_area(
-                        get_text("Archived Reports", lang), 
-                        archive_content, 
-                        height=400,
-                        key="archive_content_editor"
-                    )
-                    
-                    # If changes are detected, show a Save button
-                    if updated_archive != archive_content:
-                        if st.button(get_text("💾 Save Archive Changes", lang), width="stretch"):
-                            with open(archive_file_path, "w", encoding="utf-8") as f:
-                                f.write(updated_archive)
-                            st.success(get_text("Archive updated successfully!", lang))
-                            st.rerun()
-                else:
-                    st.info(get_text("No persistent archives found yet.", lang))
+                st.info(get_text("No persistent archives found yet.", lang))
 
     with tab_routines:
         render_routines(current_user)
@@ -1741,6 +1799,7 @@ def render_dashboard(current_user):
                     lesson_content = generate_learning_content(topic.strip(), lang)
                     st.session_state[f"lesson_{current_user}"] = lesson_content
                     st.session_state[f"lesson_topic_{current_user}"] = topic.strip()
+                    st.session_state.speak_text = lesson_content
         
         lesson = st.session_state.get(f"lesson_{current_user}")
         if lesson:
@@ -1753,16 +1812,13 @@ def render_dashboard(current_user):
             current_topic = st.session_state.get(f"lesson_topic_{current_user}", "AI Lesson")
             
             with col_act1:
-                if current_user != "guest":
-                    if st.button(get_text("💾 Archive Lesson", lang), width="stretch"):
-                        archive_text = f"--- AI Lesson: {current_topic} ---\n{lesson}"
-                        status = tools.log_report(archive_text)
-                        if "Success" in status:
-                            st.success(get_text("Lesson archived successfully!", lang))
-                        else:
-                            st.error(status)
-                else:
-                    st.info(get_text("Log in to archive lessons.", lang))
+                if st.button(get_text("💾 Archive Lesson", lang), width="stretch"):
+                    archive_text = f"--- AI Lesson: {current_topic} ---\n{lesson}"
+                    status = tools.log_report(archive_text)
+                    if "Success" in status:
+                        st.success(get_text("Lesson archived successfully!", lang))
+                    else:
+                        st.error(status)
             
             with col_act2:
                 st.markdown(f"**{get_text('Share Lesson:', lang)}**")
@@ -1793,7 +1849,7 @@ def render_dashboard(current_user):
 
         profile_file = f"resume_profile_{current_user}.txt"
         saved_profile = ""
-        if current_user != "guest" and os.path.exists(profile_file):
+        if os.path.exists(profile_file):
             with open(profile_file, "r", encoding="utf-8") as f:
                 saved_profile = f.read()
 
@@ -1844,7 +1900,7 @@ def render_dashboard(current_user):
                 elif not job_desc.strip():
                     st.error(get_text("Please provide a Job Description.", lang))
                 else:
-                    if current_user != "guest" and combined_info.strip() != saved_profile.strip():
+                    if combined_info.strip() != saved_profile.strip():
                         with open(profile_file, "w", encoding="utf-8") as f:
                             f.write(combined_info.strip())
                         st.success(get_text("Your profile has been automatically updated with the new details!", lang))
@@ -1852,6 +1908,7 @@ def render_dashboard(current_user):
                     with st.spinner(get_text("Generating resume...", lang)):
                         tailored_text = generate_tailored_resume(combined_info, job_desc, lang)
                         st.session_state[f"resume_output_{current_user}"] = tailored_text
+                        st.session_state.speak_text = get_text("Resume generated successfully!", lang)
                         
         if f"resume_output_{current_user}" in st.session_state:
             res_txt = st.session_state[f"resume_output_{current_user}"]
@@ -1869,133 +1926,140 @@ def render_dashboard(current_user):
                     
     with tab_expenses:
         st.header(get_text("💰 Expense Tracker", lang))
-        if current_user == "guest":
-            st.info(get_text("Please log in to manage your expenses.", lang))
-        else:
-            with st.expander(get_text("⚙️ Manage Recurring Expenses", lang), expanded=False):
-                with st.form("add_recurring_expense_form"):
-                    col_re1, col_re2 = st.columns(2)
-                    re_amount = col_re1.number_input(get_text("Amount", lang), min_value=0.0, format="%.2f", key="re_amount")
-                    re_category = col_re2.selectbox(get_text("Category", lang), [
-                        get_text("Food", lang), get_text("Transport", lang), 
-                        get_text("Shopping", lang), get_text("Bills", lang), get_text("Other", lang)
-                    ], key="re_category")
-                    re_desc = st.text_input(get_text("Description", lang), key="re_desc")
-                    
-                    if st.form_submit_button(get_text("➕ Add Recurring Expense", lang)):
-                        if re_amount > 0 and re_desc.strip():
-                            re_data = load_recurring_expenses_data()
-                            if current_user not in re_data:
-                                re_data[current_user] = {"settings": [], "history": {}}
-                            
-                            re_data[current_user]["settings"].append({
-                                "id": str(uuid.uuid4())[:8],
-                                "amount": re_amount,
-                                "category": re_category,
-                                "description": re_desc.strip()
-                            })
-                            save_recurring_expenses_data(re_data)
-                            st.success(get_text("Recurring expense added successfully!", lang))
-                            st.rerun()
-                        else:
-                            st.error(get_text("Amount must be greater than 0 and description is required.", lang))
+        with st.expander(get_text("⚙️ Manage Recurring Expenses", lang), expanded=False):
+            with st.form("add_recurring_expense_form"):
+                col_re1, col_re2 = st.columns(2)
+                re_amount = col_re1.number_input(get_text("Amount", lang), min_value=0.0, format="%.2f", key="re_amount")
+                re_category = col_re2.selectbox(get_text("Category", lang), [
+                    get_text("Food", lang), get_text("Transport", lang), 
+                    get_text("Shopping", lang), get_text("Bills", lang), get_text("Other", lang)
+                ], key="re_category")
+                re_desc = st.text_input(get_text("Description", lang), key="re_desc")
                 
-                re_data = load_recurring_expenses_data()
-                user_re_data = re_data.get(current_user, {"settings": [], "history": {}})
-                if user_re_data["settings"]:
-                    st.markdown(get_text("**Your Recurring Expenses:**", lang))
-                    for i, re_item in enumerate(user_re_data["settings"]):
-                        col_del1, col_del2 = st.columns([0.9, 0.1])
-                        col_del1.write(f"- **{re_item['description']}**: ${re_item['amount']:.2f} ({re_item['category']})")
-                        if col_del2.button("🗑️", key=f"del_re_{re_item['id']}", help="Delete Recurring Expense"):
-                            user_re_data["settings"].pop(i)
+                if st.form_submit_button(get_text("➕ Add Recurring Expense", lang)):
+                    if re_amount > 0 and re_desc.strip():
+                        re_data = load_recurring_expenses_data()
+                        if current_user not in re_data:
+                            re_data[current_user] = {"settings": [], "history": {}}
+                        
+                        re_data[current_user]["settings"].append({
+                            "id": str(uuid.uuid4())[:8],
+                            "amount": re_amount,
+                            "category": re_category,
+                            "description": re_desc.strip()
+                        })
+                        save_recurring_expenses_data(re_data)
+                        st.success(get_text("Recurring expense added successfully!", lang))
+                        st.rerun()
+                    else:
+                        st.error(get_text("Amount must be greater than 0 and description is required.", lang))
+            
+            re_data = load_recurring_expenses_data()
+            user_re_data = re_data.get(current_user, {"settings": [], "history": {}})
+            if user_re_data["settings"]:
+                st.markdown(get_text("**Your Recurring Expenses:**", lang))
+                for i, re_item in enumerate(user_re_data["settings"]):
+                    col_del1, col_del2 = st.columns([0.9, 0.1])
+                    col_del1.write(f"- **{re_item['description']}**: ${re_item['amount']:.2f} ({re_item['category']})")
+                    if col_del2.button("🗑️", key=f"del_re_{re_item['id']}", help="Delete Recurring Expense"):
+                        user_re_data["settings"].pop(i)
+                        re_data[current_user] = user_re_data
+                        save_recurring_expenses_data(re_data)
+                        st.rerun()
+
+        re_data = load_recurring_expenses_data()
+        user_re_data = re_data.get(current_user, {"settings": [], "history": {}})
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        if user_re_data["settings"]:
+            if today_str not in user_re_data["history"]:
+                user_re_data["history"][today_str] = {}
+            
+            today_history = user_re_data["history"][today_str]
+            pending_re = [re_item for re_item in user_re_data["settings"] if re_item["id"] not in today_history]
+            
+            if pending_re:
+                st.subheader(get_text("📅 Today's Recurring Expenses", lang))
+                for re_item in pending_re:
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([2, 1, 1])
+                        c1.markdown(f"**{re_item['description']}** - ${re_item['amount']:.2f} ({re_item['category']})")
+                        if c2.button(get_text("✅ Add", lang), key=f"re_add_{re_item['id']}", width="stretch"):
+                            tools.add_expense(re_item['amount'], re_item['category'], re_item['description'], today_str, current_user)
+                            today_history[re_item['id']] = "added"
+                            user_re_data["history"][today_str] = today_history
                             re_data[current_user] = user_re_data
                             save_recurring_expenses_data(re_data)
                             st.rerun()
-
-            re_data = load_recurring_expenses_data()
-            user_re_data = re_data.get(current_user, {"settings": [], "history": {}})
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            
-            if user_re_data["settings"]:
-                if today_str not in user_re_data["history"]:
-                    user_re_data["history"][today_str] = {}
-                
-                today_history = user_re_data["history"][today_str]
-                pending_re = [re_item for re_item in user_re_data["settings"] if re_item["id"] not in today_history]
-                
-                if pending_re:
-                    st.subheader(get_text("📅 Today's Recurring Expenses", lang))
-                    for re_item in pending_re:
-                        with st.container(border=True):
-                            c1, c2, c3 = st.columns([2, 1, 1])
-                            c1.markdown(f"**{re_item['description']}** - ${re_item['amount']:.2f} ({re_item['category']})")
-                            if c2.button(get_text("✅ Add", lang), key=f"re_add_{re_item['id']}", width="stretch"):
-                                tools.add_expense(re_item['amount'], re_item['category'], re_item['description'], today_str, current_user)
-                                today_history[re_item['id']] = "added"
-                                user_re_data["history"][today_str] = today_history
-                                re_data[current_user] = user_re_data
-                                save_recurring_expenses_data(re_data)
-                                st.rerun()
-                            if c3.button(get_text("⏭️ Skip", lang), key=f"re_skip_{re_item['id']}", width="stretch"):
-                                today_history[re_item['id']] = "skipped"
-                                user_re_data["history"][today_str] = today_history
-                                re_data[current_user] = user_re_data
-                                save_recurring_expenses_data(re_data)
-                                st.rerun()
-                    st.divider()
-
-            with st.form("add_expense_form"):
-                col_e1, col_e2 = st.columns(2)
-                e_amount = col_e1.number_input(get_text("Amount", lang), min_value=0.0, format="%.2f")
-                e_category = col_e2.selectbox(get_text("Category", lang), [
-                    get_text("Food", lang), get_text("Transport", lang), 
-                    get_text("Shopping", lang), get_text("Bills", lang), get_text("Other", lang)
-                ])
-                e_desc = st.text_input(get_text("Description", lang))
-                e_date = st.date_input(get_text("Date", lang))
-                
-                if st.form_submit_button(get_text("➕ Add Expense", lang)):
-                    if e_amount > 0:
-                        tools.add_expense(e_amount, e_category, e_desc, e_date.strftime("%Y-%m-%d"), current_user)
-                        st.success(get_text("Expense added successfully!", lang))
-                        st.rerun()
-                    else:
-                        st.error(get_text("Amount must be greater than 0.", lang))
-
-            exp_df = load_expenses_df(current_user)
-            if not exp_df.empty:
-                today = pd.Timestamp.today().date()
-                this_month = today.replace(day=1)
-                
-                daily_total = exp_df[exp_df['Date'] == today]['Amount'].sum()
-                monthly_total = exp_df[pd.to_datetime(exp_df['Date']) >= pd.to_datetime(this_month)]['Amount'].sum()
-                
+                        if c3.button(get_text("⏭️ Skip", lang), key=f"re_skip_{re_item['id']}", width="stretch"):
+                            today_history[re_item['id']] = "skipped"
+                            user_re_data["history"][today_str] = today_history
+                            re_data[current_user] = user_re_data
+                            save_recurring_expenses_data(re_data)
+                            st.rerun()
                 st.divider()
-                m1, m2 = st.columns(2)
-                m1.metric(get_text("Daily Total", lang), f"${daily_total:.2f}")
-                m2.metric(get_text("Monthly Total", lang), f"${monthly_total:.2f}")
-                
-                st.subheader(get_text("📊 Expense Summary", lang))
-                exp_editor = exp_df.copy()
-                exp_editor.insert(0, "🗑️", False)
-                
-                edited_exp = st.data_editor(
-                    exp_editor, hide_index=True, width="stretch",
-                    column_config={"🗑️": st.column_config.CheckboxColumn(get_text("Delete?", lang), default=False), "Owner": None},
-                    key="expense_editor"
-                )
-                if st.button(get_text("💾 Save Changes", lang), key="save_exp_btn"):
-                    save_df = edited_exp[edited_exp["🗑️"] == False].drop(columns=["🗑️"])
-                    if os.path.exists(tools.EXPENSES_FILE):
-                        full_exp = pd.read_csv(tools.EXPENSES_FILE, dtype={'Owner': str})
-                        full_exp['Owner'] = full_exp['Owner'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
-                        other_exp = full_exp[full_exp['Owner'] != current_user]
-                        pd.concat([other_exp, save_df], ignore_index=True).to_csv(tools.EXPENSES_FILE, index=False)
-                    else:
-                        save_df.to_csv(tools.EXPENSES_FILE, index=False)
-                    st.success(get_text("Changes saved!", lang))
+
+        with st.form("add_expense_form"):
+            col_e1, col_e2 = st.columns(2)
+            e_amount = col_e1.number_input(get_text("Amount", lang), min_value=0.0, format="%.2f")
+            e_category = col_e2.selectbox(get_text("Category", lang), [
+                get_text("Food", lang), get_text("Transport", lang), 
+                get_text("Shopping", lang), get_text("Bills", lang), get_text("Other", lang)
+            ])
+            e_desc = st.text_input(get_text("Description", lang))
+            e_date = st.date_input(get_text("Date", lang))
+            
+            if st.form_submit_button(get_text("➕ Add Expense", lang)):
+                if e_amount > 0:
+                    tools.add_expense(e_amount, e_category, e_desc, e_date.strftime("%Y-%m-%d"), current_user)
+                    st.success(get_text("Expense added successfully!", lang))
                     st.rerun()
+                else:
+                    st.error(get_text("Amount must be greater than 0.", lang))
+
+        exp_df = load_expenses_df(current_user)
+        if not exp_df.empty:
+            today = pd.Timestamp.today().date()
+            this_month = today.replace(day=1)
+            
+            daily_total = exp_df[exp_df['Date'] == today]['Amount'].sum()
+            monthly_total = exp_df[pd.to_datetime(exp_df['Date']) >= pd.to_datetime(this_month)]['Amount'].sum()
+            
+            st.divider()
+            m1, m2 = st.columns(2)
+            m1.metric(get_text("Daily Total", lang), f"${daily_total:.2f}")
+            m2.metric(get_text("Monthly Total", lang), f"${monthly_total:.2f}")
+            
+            st.subheader(get_text("📊 Expense Summary", lang))
+            exp_editor = exp_df.copy()
+            exp_editor.insert(0, "🗑️", False)
+            
+            edited_exp = st.data_editor(
+                exp_editor, hide_index=True, width="stretch",
+                column_config={"id": None, "🗑️": st.column_config.CheckboxColumn(get_text("Delete?", lang), default=False), "Owner": None},
+                key="expense_editor"
+            )
+            if st.button(get_text("💾 Save Changes", lang), key="save_exp_btn"):
+                save_df = edited_exp[edited_exp["🗑️"] == False].drop(columns=["🗑️"])
+                with SyncSessionLocal() as session:
+                    for idx, row in edited_exp.iterrows():
+                        if row.get("🗑️", False):
+                            exp_id = row.get('id')
+                            if pd.notna(exp_id):
+                                e = session.query(ExpenseDB).filter(ExpenseDB.id == exp_id).first()
+                                if e: session.delete(e)
+                        else:
+                            exp_id = row.get('id')
+                            if pd.notna(exp_id):
+                                e = session.query(ExpenseDB).filter(ExpenseDB.id == exp_id).first()
+                                if e:
+                                    e.amount = float(row['Amount'])
+                                    e.category = str(row['Category'])
+                                    e.description = str(row['Description'])
+                                    e.date = str(row['Date'])
+                    session.commit()
+                st.success(get_text("Changes saved!", lang))
+                st.rerun()
 
 if __name__ == "__main__":
     main()

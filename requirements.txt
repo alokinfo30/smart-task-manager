@@ -9,3 +9,11 @@ ollama
 pusher
 pusher-push-notifications
 auth0-server-python>=1.0.0b1,<2
+fastapi
+uvicorn
+aiosqlite
+sqlalchemy
+pytest
+httpx
+pytest-asyncio
+PyJWT

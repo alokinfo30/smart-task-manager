@@ -1,159 +1,91 @@
-An AI-powered task assistant using Streamlit and Gemini/Gemma, featuring automated analysis, persistent history, and real-time productivity metrics tracking.
+# 🤖 Smart Task Manager
 
-Run Frointend At local using
-streamlit run d:\project\smart-task-manager\app.py 
-or 
-streamlit run app.py 
+An enterprise-grade, AI-powered personal assistant available in two independent architectures: a highly scalable **Next.js + FastAPI** Progressive Web App, and a rapid-prototyping **Streamlit** monolith.
 
-Make sure to install the required PDF dependencies to use the Resume generation functionality:
-`pip install PyPDF2 fpdf`
+With features ranging from real-time Kanban task management and financial tracking, to autonomous AI execution, daily routine coaching, and resume building, this app centralizes productivity.
 
 ---
 
-## 🌟 Key Features of the Application
+## 🌟 How This Benefits the Common Person
+In modern life, people juggle multiple apps for their daily needs: one app for tasks, another for budgeting, a separate AI chatbot for learning, and physical notebooks for habit tracking. 
 
-### 1. Secure Authentication & Session Management
-- **Multiple Login Methods**: Google SSO, Mobile Number & 6-Digit PIN, or a quick Demo Guest Mode.
-- **Security & Account Recovery**: 3-attempt lockout auto-reset mechanism and security questions for PIN recovery.
-- **Privacy Masking**: Protects sensitive mobile numbers across the UI (e.g., `98******10`).
-
-### 2. Autonomous AI Assistant (Agentic AI)
-- **Natural Language Task Management**: Chat with the AI to Add, Update, or Delete tasks without touching the UI.
-- **Workload Analysis & Prioritization**: The AI evaluates your pending vs. completed tasks to suggest priorities and highlight fast-track opportunities.
-- **Smart Breakdown**: Simplifies complex, vague tasks into actionable sub-steps.
-
-### 3. Task Dashboard & Productivity Gamification
-- **Live Status Overview**: A central table to view and manage task status (Pending, Working, Done), priority, and due dates.
-- **Rank & Sprint Speed**: Earn ranks like *Rookie*, *Busy Bee*, *Productivity Pro*, or *Elite Executioner* based on your completion efficiency.
-- **Real-Time Multiplayer Sync**: Uses WebSockets to broadcast task board updates across multiple devices simultaneously.
-
-### 4. Daily Routines & Punctuality Tracker
-- **Routine Management**: Define habits, start/end times, and active days.
-- **Punctuality Scoring**: Check-in and check-out to earn an overall daily punctuality score. Get feedback for being early, late, or on time.
-- **Multi-channel Alerts**: Real-time reminders via Browser TTS (Text-to-Speech), Email (Gmail), and Telegram.
-
-### 5. AI Learning Hub
-- **Instant Tutoring**: Enter any topic (e.g., "Python Decorators", "Spanish Verbs").
-- **Structured Content**: Automatically generates basic concepts, syntax/examples, and a 3-5 question practice quiz with answers.
-
-### 6. AI Resume Builder (PDF Generation)
-- **Inputs**: Fill out standard form details (Experience, Education, Links) OR simply upload an existing Resume PDF/TXT.
-- **Job Tailoring**: Paste a job description to dynamically align and format your skills specifically for the role using the AI.
-- **Download**: Exports a clean, formatted plain-text PDF file.
-
-### 7. Daily & Monthly Expense Tracker
-- **Financial Oversight**: Log your daily cash flow categorized by Food, Transport, Shopping, Bills, etc.
-- **AI Budgeting**: The Autonomous AI can directly log expenses via natural text (e.g. "I spent $25 on Food") and provide insights into your financial health.
-- **Dashboard Overviews**: Readily view "Daily Total" and "Monthly Total" metrics to stay on top of your budget limits.
-
-### 8. Multilingual Support
-- The app supports 10 languages, automatically defaulting based on geolocation or user selection (English, Hindi, Spanish, Mandarin, Arabic, French, Bengali, Portuguese, Russian, Urdu).
+**Smart Task Manager consolidates all of this into a single, cohesive, offline-capable application:**
+- **Reduce Cognitive Load:** The Autonomous AI Agent can manage your tasks and log your expenses simply by listening to your voice ("I just spent $40 on groceries").
+- **Maintain Mental Health:** The "Happiness System" and interactive 30-Day Goal tracker ensure you don't just focus on work, but also on your physical health, social connections, and well-being.
+- **Stay on Top of Finances:** Track your recurring expenses (Netflix, Rent) and visualize your spending habits through a 30-day interactive trend graph.
+- **Hands-Free Productivity:** Browser Text-to-Speech (TTS) capabilities mean the application can read lessons to you or confirm your check-ins while you are multitasking.
+- **Career Growth:** The AI Learning Hub and Tailored Resume Builder act as a free, 24/7 personal tutor and career coach.
 
 ---
 
 ## 🛠️ Tools & Technologies Used
 
-- **Frontend & Web Framework**: Streamlit
-- **Programming Language**: Python 3
-- **Artificial Intelligence**: Google Generative AI SDK (Gemini 1.5 Flash, Gemini 2.0 Flash, Gemini 1.5 Flash-8B)
-- **Authentication**: Google OAuth 2.0 & Custom PBKDF2 Hashing
-- **Real-Time Communication**: `websockets` & `asyncio`
-- **Data Manipulation**: `pandas`
-- **Storage**: Flat files (`CSV`, `JSON`, `TXT`)
-- **PDF Creation/Parsing**: `fpdf`, `PyPDF2`
-- **Notifications**: Standard `smtplib` (Email), Telegram Bot API, JS SpeechSynthesis API
+### Frontend (Next.js)
+- **Framework:** Next.js 14+ (App Router)
+- **Language:** TypeScript & React
+- **Testing:** Cypress (End-to-End Automated Testing)
+- **Data Visualization:** Recharts
+- **Real-Time UI:** Pusher-js & Custom Window Events
+- **Progressive Web App:** Native Service Workers & Web Manifest (Installable on mobile/desktop)
+- **Voice Interactivity:** Web Speech API (Dictation & Text-to-Speech)
+
+### Backend (FastAPI)
+- **Framework:** FastAPI (Python 3.10+)
+- **Database:** SQLAlchemy (PostgreSQL / SQLite)
+- **AI Integration:** Google Generative AI (Gemini Flash Models)
+- **Authentication:** PyJWT, PBKDF2 Hashing, Google OAuth 2.0
+- **PDF Parsing:** PyPDF2
+- **Real-Time Sync:** Pusher Python SDK
 
 ---
 
-## 👶 Baby Steps: How to Use Each Feature Efficiently
+## 🚀 Key Features
 
-### Step 1: Getting Started & Authentication
-1. **Launch the App**: Run `streamlit run app.py` in your terminal.
-2. **Choose a Login Method**: 
-   - Want to just explore? Click **Login as Demo User**.
-   - For a secure profile, click **Register** under "Mobile Number & PIN", set up your 6-digit PIN, and answer a security question.
-   - *Tip*: Check the "Remember Me" box to stay logged in after page refreshes.
-
-### Step 2: Managing Your Tasks
-1. Navigate to the **Tasks & AI Agent** tab.
-2. **Add a Task**: Click the `➕ Add New Task` button to manually enter a task, or use the AI Assistant.
-3. **Update Status**: In the "Task Editor", change the dropdown under "Status" from *Pending* to *Working* or *Done*. 
-4. **Save**: Always click `💾 Save Changes` to confirm your updates. Check your "Sprint Progress" bar to see your rank improve!
-
-### Step 3: Utilizing the AI Assistant
-1. In the **Tasks & AI Agent** tab, locate the Chat Interface.
-2. **Commanding the AI**: Type "Add a task to review the monthly budget" and hit Enter. The AI will parse this and automatically add it to your board.
-3. **Quick Prompts**: Click buttons like `📊 Analyze workload` or `🎯 Suggest priorities` for instant AI coaching.
-4. **Persistent Archiving**: Select specific valuable AI messages using the checkboxes next to them, then click `💾 Archive Selected Messages`. View them later in the **View Persistent Archives** expander.
-
-### Step 4: Tracking Daily Routines
-1. Go to the **⏱️ Daily Routines & Punctuality** tab.
-2. **Create a Routine**: Open `⚙️ Manage Routine Timings`, enter a name (e.g., "Morning Walk"), set expected start/end times, pick active days, and click `➕ Add Routine`.
-3. **Check-In/Out**: During the day, click `🟢 Check-In` when you start, and `🔴 Check-Out` when you finish. The app will calculate your punctuality score based on how close you were to your expected times!
-
-### Step 5: Learning New Topics
-1. Navigate to the **📚 Learning Hub** tab.
-2. **Generate a Lesson**: Type in any topic you're curious about (e.g., "Machine Learning Basics" or "How to bake a cake").
-3. Click **🚀 Generate Lesson** and read through the AI-generated concepts, examples, and test yourself with the quick quiz at the bottom!
-
-### Step 6: Using the Resume Builder
-1. Navigate to the **📄 Resume Builder** tab.
-2. Upload an existing resume (PDF/TXT) OR manually enter your Name, Email, URLs, Experience, Education, and Projects.
-3. Paste the **Job Description** of the role you are applying to into the right-hand text box.
-4. Click **✨ Generate Tailored Resume**.
-5. Preview the result in the text area below and click **📥 Download Resume (PDF)**.
-
-### Step 7: Managing Your Budget & Expenses
-1. Click on the **💰 Expense Tracker** tab.
-2. To manually add a purchase, enter the amount, select a category, add a description, and click **➕ Add Expense**.
-3. Want to do it hands-free? Go to the Agent tab and say: "I just bought $50 of Groceries, log it."
-4. Your Daily and Monthly spending metrics will instantly update on the dashboard!
-
-### Step 8: Activating Google Analytics (Traffic Tracking)
-To see how many users are visiting your app, where they are from, and what features they use, you can activate the built-in Google Analytics tracker:
-1. **Visit Google Analytics**: Go to [analytics.google.com](https://analytics.google.com/) and sign in with your Google account.
-2. **Create a Property**: Click the blue "Start measuring" button. (If you already have an account, click the Admin gear icon ⚙️ at the bottom left, then click **Create Property**).
-3. **Property Details**: Name your property (e.g., "Smart Task Manager"), select your timezone/currency, and click Next.
-4. **Choose Platform**: When asked to choose a platform to collect data, click on **Web**.
-5. **Set up Data Stream**: Enter your website's URL (if you are just testing locally, you can type `localhost`) and give your stream a name. Click **Create stream**.
-6. **Copy Your Measurement ID**: On the "Web stream details" page that pops up, look at the top right corner for the **Measurement ID**. It always starts with `G-` (for example, `G-A1B2C3D4E5`). Copy this exact ID.
-7. **Update your Environment Variables**: Open your `.env` file and add the following line: `GA_MEASUREMENT_ID="G-YOUR_COPIED_ID"`
-8. **Restart**: Restart your Streamlit server. The app will automatically inject the tracking code, and the next time someone opens your app, their visit will be recorded live in your Google Analytics dashboard!
+1. **Offline-Capable PWA (Next.js):** The frontend uses Service Workers to cache assets, loading the UI instantly even on a poor connection.
+2. **Agentic AI:** Powered by Gemma/Gemini. The AI utilizes autonomous tool-calling to manipulate your database rows (Tasks, Expenses) via natural language.
+3. **Kanban Dashboard:** Create, edit, delete, and share tasks. Export your backlog to CSV, or use the Microphone to dictate new tasks.
+4. **Expense Tracker:** Includes daily/monthly budget tracking, management of recurring expenses, and an interactive 30-day spending chart.
+5. **Account Management:** Robust Auth utilizing JSON Web Tokens (JWT). Link a Google Account via SSO, recover forgotten PINs using security questions, or securely delete your data.
+6. **Multilingual Voice Capabilities:** Support for 6+ languages. The AI agent can listen to your native language and read responses aloud with matching accents.
 
 ---
 
-## 🚀 Production & Deployment Notes
+## 💻 How to Run (Option 1: Next.js + FastAPI)
 
-This application is designed to be compatible with both local development (e.g., `http://localhost:8501`) and a live production server (e.g., `https://staskma.streamlit.app/`). The configuration is managed through environment variables.
+Run the fully decoupled, modern web application stack.
 
-Note on Server-Side Production:
-If your goal was to automatically install Ollama on the production server (e.g., an AWS EC2 or DigitalOcean Linux VPS) rather than the end-user's PC, you should run this command on your server's terminal once before starting Streamlit:
+### 1. Prerequisites
+- **Node.js:** v18 or newer
+- **Python:** v3.10 or newer
 
-bash
-curl -fsSL https://ollama.com/install.sh | sh
-ollama serve &
-ollama pull llama3.2
+### 2. Backend Setup (FastAPI)
+Navigate to the backend directory, install the dependencies, and configure your secrets:
+```bash
+cd backend
 
-### Environment Variable Configuration
+# Create a virtual environment (Optional but recommended)
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-#### 1. Development (Local Machine)
-For local development, create a file named `.env` in the root of your project. This file is loaded automatically and should contain all your secrets and local URLs. **This file should NOT be committed to version control (e.g., Git).**
-
-*Example `.env` for local development:*
+# Install dependencies
+pip install -r requirements.txt
 ```
+
+Create a `.env` file inside the `backend` folder:
+```env
 GOOGLE_API_KEY="your_google_api_key"
-APP_BASE_URL="http://localhost:8501"
-WEBSOCKET_HOST="localhost"
-GA_MEASUREMENT_ID="G-YOUR_DEV_ID"
-# Pusher (for real-time sync)
-PUSHER_APP_ID="your_pusher_app_id"
-PUSHER_KEY="your_pusher_key"
-PUSHER_SECRET="your_pusher_secret"
-PUSHER_CLUSTER="your_pusher_cluster"
-# Pusher Beams (for web push notifications)
-PUSHER_BEAMS_INSTANCE_ID="3005694d-c9a2-4cc9-a1b7-fd96d3e6d03a"
-PUSHER_BEAMS_SECRET_KEY="415DE55DCF6F73C6DB4B49913C6342ABDE65E16EE1DC6DEE6DE322236EDDB5DE"
-# ... other keys like Google OAuth, Gmail, Telegram ...
+JWT_SECRET="your_secure_random_string_here"
+ENVIRONMENT="development"
+
+# Optional: For Google SSO
+GOOGLE_CLIENT_ID="your_client_id"
+GOOGLE_CLIENT_SECRET="your_client_secret"
+
+# Optional: For real-time updates across multiple browser tabs
+PUSHER_APP_ID="your_app_id"
+NEXT_PUBLIC_PUSHER_KEY="your_key"
+PUSHER_SECRET="your_secret"
+NEXT_PUBLIC_PUSHER_CLUSTER="your_cluster"
 ```
 
 #### 2. Production (Live Server)
