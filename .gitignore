@@ -1,20 +1,25 @@
-# Python & Virtual Environments
+# Python & Environments
 __pycache__/
 *.py[cod]
 *$py.class
-venv/
-.venv/
-env/
 .env
+.venv/
+venv/
+env/
 
-# Local User Databases and Logs (Prevent pushing sensitive/local data)
-todo.txt
-expenses.csv
-passwords.json
-sessions.json
+# Databases & User Data
+*.db
+*.sqlite3
+raw_pins.json
 routines.json
 recurring_expenses.json
-chat_history_*.json
-resume_profile_*.txt
-sent_pins_log.txt
 archives/
+sent_pins_log.txt
+resume_profile_*.txt
+data/
+
+# OS
+.DS_Store
+
+# Ignore node_modules if accidentally installed in root
+node_modules/
