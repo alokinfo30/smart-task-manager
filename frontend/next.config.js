@@ -1,8 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Optional: Change the output directory if needed (default is 'out')
-  // distDir: 'dist',
-  images: { unoptimized: true } // Required for static exports if using Next.js <Image />
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL}/api/:path*`, // Proxy to Backend
+      },
+    ];
+  },
 };
 
 module.exports = nextConfig;

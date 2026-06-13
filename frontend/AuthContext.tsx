@@ -50,13 +50,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (username: string, password: string) => {
     // The backend expects a JSON payload with "mobile" and "pin"
-    await api.post('/api/auth/login', {
+    const response = await api.post('/api/auth/login', {
       mobile: username,
       pin: password
     });
     
-    // Refresh user state after logging in
-    const response = await api.get('/api/auth/me');
     setUser(response.data);
     window.location.href = '/';
   };

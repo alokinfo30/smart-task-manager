@@ -1,15 +1,10 @@
 import axios from 'axios';
 
-let baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
-// Dynamically align the API hostname with the browser's hostname to prevent 
-// cross-origin cookie dropping (SameSite=lax) when using localhost vs 127.0.0.1.
-if (typeof window !== 'undefined') {
-  if (window.location.hostname === 'localhost' && baseURL.includes('127.0.0.1')) {
-    baseURL = baseURL.replace('127.0.0.1', 'localhost');
-  } else if (window.location.hostname === '127.0.0.1' && baseURL.includes('localhost')) {
-    baseURL = baseURL.replace('localhost', '127.0.0.1');
-  }
+// Proxy requests through Next.js to completely bypass third-party cookie blockers and CORS
+let baseURL = '';
+if (typeof window === 'undefined') {
+  // Only use the absolute URL when rendering on the server side (SSR/SSG)
+  baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 }
 
 const api = axios.create({
