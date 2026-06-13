@@ -14,7 +14,6 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: 'Smart Task Manager',
   description: 'AI-powered offline-first task and expense manager.',
-  manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
@@ -25,6 +24,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="manifest" href="/manifest.json" />
+      </head>
       <body suppressHydrationWarning>
         <AuthProvider>
         {children}
