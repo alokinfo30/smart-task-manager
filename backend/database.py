@@ -4,13 +4,24 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column, sessionmaker
 from sqlalchemy import String, Float, Integer
 
-# Fetch the Supabase URL from environment variables, fallback to SQLite for local development
-DB_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./smart_task.db")
-SYNC_DB_URL = os.getenv("SYNC_DATABASE_URL", "sqlite:///./smart_task.db")
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+db_path = os.path.join(ROOT_DIR, "smart_task.db")
 
-engine = create_async_engine(DB_URL, echo=False)
+# Fetch the Supabase URL from environment variables, fallback to SQLite for local development
+DB_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+SYNC_DB_URL = os.getenv("SYNC_DATABASE_URL", f"sqlite:///{db_path}")
+
+async_engine_kwargs = {}
+sync_engine_kwargs = {}
+
+if "sqlite" in DB_URL:
+    async_engine_kwargs["connect_args"] = {"timeout": 15}
+if "sqlite" in SYNC_DB_URL:
+    sync_engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 15}
+
+engine = create_async_engine(DB_URL, echo=False, **async_engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-sync_engine = create_engine(SYNC_DB_URL, echo=False)
+sync_engine = create_engine(SYNC_DB_URL, echo=False, **sync_engine_kwargs)
 SyncSessionLocal = sessionmaker(bind=sync_engine)
 Base = declarative_base()
 

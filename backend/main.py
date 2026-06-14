@@ -496,25 +496,21 @@ async def delete_task(task_id: int, user_id: str = Depends(get_current_user)):
 # --- Expenses Endpoints ---
 @app.get("/api/expenses")
 async def get_expenses(user_id: str = Depends(get_current_user)):
-    def _read_expenses():
-        try:
-            if not os.path.exists(EXPENSES_FILE): return {"expenses": []}
-            df = pd.read_csv(EXPENSES_FILE, dtype=str)
-            if 'Owner' not in df.columns: df['Owner'] = ""
-            df['Owner'] = df['Owner'].fillna('')
-            user_df = df[df['Owner'] == user_id].copy()
-            user_df['id'] = user_df.index
-            user_df = user_df.fillna("")
-            user_df = user_df.rename(columns={"Amount": "amount", "Category": "category", "Description": "description", "Date": "date"})
-            records = user_df.to_dict(orient="records")
-            for r in records:
-                for k, v in r.items():
-                    if pd.isna(v) or str(v).lower() == "nan": r[k] = ""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(ExpenseDB).filter(ExpenseDB.owner == user_id).order_by(ExpenseDB.id.desc()))
+            expenses = result.scalars().all()
+            records = []
+            for e in expenses:
+                records.append({
+                    "id": e.id, "date": e.date or "", "amount": e.amount or 0.0,
+                    "category": e.category or "", "description": e.description or "",
+                    "owner": e.owner or ""
+                })
             return {"expenses": records}
-        except Exception as e:
-            logger.error(f"Read expenses failed: {e}", exc_info=True)
-            return {"expenses": []}
-    return await asyncio.to_thread(_read_expenses)
+    except Exception as e:
+        logger.error(f"Read expenses failed: {e}", exc_info=True)
+        return {"expenses": []}
 
 class AddExpenseRequest(BaseModel):
     user_id: str = ""
