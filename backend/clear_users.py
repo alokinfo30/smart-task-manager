@@ -50,8 +50,8 @@ def clear_real_users():
 
     # 3. Clean left-over text files (Resumes and Persistent Archives)
     for mobile in deleted_mobiles:
-        resume_file = os.path.join(ROOT_DIR, f"resume_profile_{mobile}.txt")
         safe_id = "".join(c for c in mobile if c.isalnum() or c in ("_", "-", "@", "."))
+        resume_file = os.path.join(ROOT_DIR, f"resume_profile_{safe_id}.txt")
         archive_file = os.path.join(ROOT_DIR, "backend", "archives", f"daily_summary_{safe_id}.txt")
         
         for p in [resume_file, archive_file]:

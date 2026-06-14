@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Pusher from 'pusher-js';
-import api from './api';
+import { fetchWithAuth } from './app/fetchWithAuth';
 
 interface Task {
   id: number;
@@ -26,11 +26,16 @@ export default function DashboardClientWrapper({ session }: { session: string })
   const [searchQuery, setSearchQuery] = useState('');
   const [isListening, setIsListening] = useState(false);
 
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
   // Fetch tasks from the FastAPI backend
   const fetchTasks = async () => {
     try {
-      const res = await api.get('/api/tasks');
-      setTasks(res.data.tasks || []);
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/tasks`);
+      if (res.ok) {
+        const data = await res.json();
+        setTasks(data.tasks || []);
+      }
     } catch (error) {
       console.error("Failed to fetch tasks", error);
     }
@@ -72,11 +77,15 @@ export default function DashboardClientWrapper({ session }: { session: string })
     if (!newTaskText) return;
     
     try {
-      await api.post('/api/tasks', {
-        task: newTaskText,
-        priority: newTaskPriority,
-        date: new Date().toISOString().split('T')[0],
-        shared_with: ""
+      await fetchWithAuth(`${API_BASE_URL}/api/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task: newTaskText,
+          priority: newTaskPriority,
+          date: new Date().toISOString().split('T')[0],
+          shared_with: ""
+        })
       });
       setNewTaskText('');
       fetchTasks(); // Refresh the board
@@ -88,7 +97,11 @@ export default function DashboardClientWrapper({ session }: { session: string })
   // Handle Status Updates (Moving between columns)
   const updateStatus = async (taskId: number, newStatus: string) => {
     try {
-      await api.put('/api/tasks', { task_id: taskId, status: newStatus });
+      await fetchWithAuth(`${API_BASE_URL}/api/tasks`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: taskId, status: newStatus })
+      });
       fetchTasks(); // Refresh the board
     } catch (error) {
       console.error("Failed to update status", error);
@@ -98,7 +111,7 @@ export default function DashboardClientWrapper({ session }: { session: string })
   // Handle Task Deletion
   const deleteTask = async (taskId: number) => {
     try {
-      await api.delete(`/api/tasks/${taskId}`);
+      await fetchWithAuth(`${API_BASE_URL}/api/tasks/${taskId}`, { method: 'DELETE' });
       fetchTasks(); // Refresh the board
     } catch (error) {
       console.error("Failed to delete task", error);
@@ -108,7 +121,11 @@ export default function DashboardClientWrapper({ session }: { session: string })
   const saveTaskEdit = async () => {
     if (editTaskId === null) return;
     try {
-      await api.put('/api/tasks/edit', { task_id: editTaskId, task: editTaskData.task, priority: editTaskData.priority });
+      await fetchWithAuth(`${API_BASE_URL}/api/tasks/edit`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: editTaskId, task: editTaskData.task, priority: editTaskData.priority })
+      });
       setEditTaskId(null);
       fetchTasks();
     } catch (e) { console.error(e); }
@@ -117,7 +134,7 @@ export default function DashboardClientWrapper({ session }: { session: string })
   const clearDoneTasks = async () => {
     if (!window.confirm("Clear all completed tasks?")) return;
     try {
-      await api.delete('/api/tasks/done');
+      await fetchWithAuth(`${API_BASE_URL}/api/tasks/done`, { method: 'DELETE' });
       fetchTasks();
     } catch (e) { console.error(e); }
   };
@@ -126,10 +143,18 @@ export default function DashboardClientWrapper({ session }: { session: string })
     const mobile = shareInputs[taskId];
     if (!mobile) return;
     try {
-      await api.put('/api/tasks/share', { task_id: taskId, shared_with: mobile });
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/tasks/share`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: taskId, shared_with: mobile })
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || "Failed to share task");
+      }
       setShareInputs(prev => ({ ...prev, [taskId]: '' }));
       fetchTasks();
-    } catch (e: any) { alert(e.response?.data?.detail || "Failed to share task"); }
+    } catch (e: any) { alert(e.message || "Failed to share task"); }
   };
 
   const exportToCSV = () => {

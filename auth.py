@@ -142,6 +142,8 @@ class PasswordHandler:
     @staticmethod
     def hash_password(pin: str) -> Tuple[str, str]:
         """Hashes a PIN using PBKDF2 with a fresh salt."""
+        if len(pin) > 200:
+            raise AuthenticationError("Input too long for hashing")
         salt = secrets.token_hex(16)
         pwd_hash = hashlib.pbkdf2_hmac(
             HASH_ALGORITHM,
@@ -154,6 +156,8 @@ class PasswordHandler:
     @staticmethod
     def verify_password(stored_hash: str, stored_salt: str, provided_pin: str) -> bool:
         """Verifies a PIN against its stored hash."""
+        if len(provided_pin) > 200:
+            return False
         new_hash = hashlib.pbkdf2_hmac(
             HASH_ALGORITHM,
             provided_pin.encode('utf-8'),

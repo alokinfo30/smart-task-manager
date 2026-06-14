@@ -41,7 +41,8 @@ def get_archive_file_path(user_id: str):
     """Determines the file path for a user's persistent task archive."""
     if str(user_id).startswith("guest") or str(user_id).startswith("demo_"):
         return None # Guests don't have persistent archives
-    return f"daily_summary_{user_id}.txt"
+    safe_id = "".join(c for c in str(user_id) if c.isalnum() or c in ("_", "-", "@", "."))
+    return f"daily_summary_{safe_id}.txt"
 
 def read_todo_list() -> str:
     """
@@ -67,7 +68,8 @@ def read_todo_list() -> str:
             output += f"{t.id},{t.date},{t.task},{t.status},{t.priority},{t.completed_at},{t.owner},{t.shared_with}\n"
         return output
     except Exception as e:
-        return f"Error reading tasks: {str(e)}"
+        print(f"Error reading tasks: {e}")
+        return "Error reading tasks due to an internal database issue."
 
 def read_routines() -> str:
     """
@@ -92,7 +94,8 @@ def read_routines() -> str:
             out += f"- {r['name']}: {r['start']} to {r['end']} ({days})\n"
         return out
     except Exception as e:
-        return f"Error reading routines: {str(e)}"
+        print(f"Error reading routines: {e}")
+        return "Error reading routines due to an internal issue."
 
 def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_accounts: str = "", owner: str = None) -> str:
     """
@@ -136,7 +139,8 @@ def add_task(task: str = "test task", priority: str = "High", date: str = None, 
         trigger_pusher_update()
         return f"Success: Task '{task}' added successfully."
     except Exception as e:
-        return f"Error adding task: {str(e)}"
+        print(f"Error adding task: {e}")
+        return "Error adding task due to an internal issue."
 
 def delete_task(task_identifier: str, owner: str = None) -> str:
     """
@@ -168,7 +172,8 @@ def delete_task(task_identifier: str, owner: str = None) -> str:
         trigger_pusher_update()
         return f"Success: Deleted {deleted_count} task(s) matching '{task_identifier}':\n{deleted_summaries}"
     except Exception as e:
-        return f"Error deleting task: {str(e)}"
+        print(f"Error deleting task: {e}")
+        return "Error deleting task due to an internal issue."
 
 def update_task(task_identifier: str, updates: dict, owner: str = None) -> str:
     """
@@ -212,7 +217,8 @@ def update_task(task_identifier: str, updates: dict, owner: str = None) -> str:
         trigger_pusher_update()
         return f"Success: Updated {list(updates.keys())} for tasks matching '{task_identifier}'."
     except Exception as e:
-        return f"Error updating task: {str(e)}"
+        print(f"Error updating task: {e}")
+        return "Error updating task due to an internal issue."
 
 def update_task_status(task_identifier: str, new_status: str, owner: str = None) -> str:
     """
@@ -247,7 +253,8 @@ def update_task_status(task_identifier: str, new_status: str, owner: str = None)
         trigger_pusher_update()
         return f"Success: Updated status to '{new_status}' for tasks matching '{task_identifier}'."
     except Exception as e:
-        return f"Error updating task: {str(e)}"
+        print(f"Error updating task: {e}")
+        return "Error updating task due to an internal issue."
 
 def log_report(report_content: str) -> str:
     """
@@ -268,7 +275,8 @@ def log_report(report_content: str) -> str:
             f.write("\n" + "-"*40)
         return f"Success: Response has been archived in the secure storage for user {user}."
     except Exception as e:
-        return f"Error archiving response: {str(e)}"
+        print(f"Error archiving response: {e}")
+        return "Error archiving response due to an internal issue."
 
 def add_expense(amount: float, category: str, description: str, date: str = None, owner: str = None) -> str:
     """
@@ -290,7 +298,8 @@ def add_expense(amount: float, category: str, description: str, date: str = None
         trigger_pusher_update()
         return f"Success: Expense of {amount} added for '{category}'."
     except Exception as e:
-        return f"Error adding expense: {str(e)}"
+        print(f"Error adding expense: {e}")
+        return "Error adding expense due to an internal issue."
 
 def read_expenses() -> str:
     """
@@ -309,7 +318,8 @@ def read_expenses() -> str:
             output += f"{e.id},{e.date},{e.amount},{e.category},{e.description},{e.owner}\n"
         return output
     except Exception as e:
-        return f"Error reading expenses: {str(e)}"
+        print(f"Error reading expenses: {e}")
+        return "Error reading expenses due to an internal database issue."
 
 def clear_done_tasks(owner: str = None) -> str:
     """
@@ -329,7 +339,8 @@ def clear_done_tasks(owner: str = None) -> str:
         trigger_pusher_update()
         return f"Success: Cleared {cleared_count} completed tasks from your board."
     except Exception as e:
-        return f"Error clearing done tasks: {str(e)}"
+        print(f"Error clearing done tasks: {e}")
+        return "Error clearing done tasks due to an internal issue."
 
 def delete_expense(description_keyword: str, owner: str = None) -> str:
     """
@@ -351,4 +362,5 @@ def delete_expense(description_keyword: str, owner: str = None) -> str:
         trigger_pusher_update()
         return f"Success: Deleted {deleted_count} expense(s) matching '{description_keyword}'."
     except Exception as e:
-        return f"Error deleting expense: {str(e)}"
+        print(f"Error deleting expense: {e}")
+        return "Error deleting expense due to an internal issue."

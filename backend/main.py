@@ -8,16 +8,22 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
 import urllib.parse
 import secrets
 import hashlib
+import time
+from collections import defaultdict
 import base64
 import requests
 from fastapi import UploadFile, File
 from sqlalchemy.future import select
 from database import AsyncSessionLocal, TaskDB, ExpenseDB, init_db
+
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("stm_backend")
 
 # Add the parent directory to sys.path so we can import agent.py from the root directory
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,6 +35,12 @@ IS_PROD = os.getenv("ENVIRONMENT", "development").lower() == "production"
 
 def get_current_user(request: Request):
     token = request.cookies.get("stm_token")
+    
+    # Support Next.js frontend which sends Bearer tokens in Authorization header
+    auth_header = request.headers.get("Authorization")
+    if not token and auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
@@ -53,7 +65,7 @@ def trigger_pusher_update():
         try:
             pusher_client.trigger('task-board', 'update', {'event': 'data_changed'})
         except Exception as e:
-            print(f"Pusher trigger failed: {e}")
+            logger.error(f"Pusher trigger failed: {e}")
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROUTINES_FILE = os.path.join(ROOT_DIR, "routines.json")
@@ -75,7 +87,7 @@ if frontend_urls:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://[a-zA-Z0-9-]+\.vercel\.app",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
@@ -96,29 +108,63 @@ async def secure_headers_middleware(request, call_next):
 def read_root():
     return {"message": "Smart Task Manager API is running!"}
 
+# --- Rate Limiting Middleware ---
+IP_RATE_LIMIT = defaultdict(list)
+RATE_LIMIT_WINDOW = 60 # seconds
+MAX_REQUESTS_PER_WINDOW = 20
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if request.url.path.startswith("/api/auth/"):
+        # Handle Reverse Proxies (Vercel, Nginx, AWS, Cloudflare)
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "127.0.0.1"
+        now = time.time()
+        IP_RATE_LIMIT[client_ip] = [t for t in IP_RATE_LIMIT[client_ip] if now - t < RATE_LIMIT_WINDOW]
+        if len(IP_RATE_LIMIT[client_ip]) >= MAX_REQUESTS_PER_WINDOW:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=429, content={"detail": "Too many requests. Please try again later."})
+        IP_RATE_LIMIT[client_ip].append(now)
+    return await call_next(request)
+
 # --- Auth Models & Endpoints ---
 class LoginRequest(BaseModel):
-    mobile: str
-    pin: str
+    mobile: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-\.\@]+$")
+    pin: str = Field(..., max_length=50) # Remove pattern to allow dummy/empty strings
 
 class RegisterRequest(BaseModel):
-    mobile: str
-    pin: str
-    security_question: str
-    security_answer: str
+    mobile: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-\.\@]+$")
+    pin: str = Field(..., max_length=6, pattern=r"^[0-9]+$")
+    security_question: str = Field(..., max_length=300)
+    security_answer: str = Field(..., max_length=300)
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+@app.post("/api/auth/refresh")
+def refresh_token(req: RefreshRequest):
+    try:
+        user_id = TokenManager.verify_token(req.refresh_token)
+        new_token = TokenManager.create_access_token({"sub": user_id})
+        return {"access_token": new_token, "refresh_token": new_token}
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest, response: Response):
-    if req.mobile == "demo_user":
+    if req.mobile == "demo_user" or req.mobile.startswith("demo_") or req.mobile.startswith("guest"):
         token = TokenManager.create_access_token({"sub": req.mobile})
         response.set_cookie(key="stm_token", value=token, httponly=True, secure=IS_PROD, samesite="none" if IS_PROD else "lax", max_age=604800)
-        return {"user_id": req.mobile, "name": "Demo User", "email": "", "avatar": ""}
+        return {"user_id": req.mobile, "name": "Demo User", "email": "", "avatar": "", "access_token": token, "refresh_token": token}
     try:
         if PasswordHandler.login(req.mobile, req.pin):
             user_data = PasswordDB.get_user(req.mobile)
             token = TokenManager.create_access_token({"sub": req.mobile})
             response.set_cookie(key="stm_token", value=token, httponly=True, secure=IS_PROD, samesite="none" if IS_PROD else "lax", max_age=604800)
-            return {"user_id": req.mobile, "name": user_data.get("name", ""), "email": user_data.get("email", ""), "avatar": user_data.get("avatar", "")}
+            return {"user_id": req.mobile, "name": user_data.get("name", ""), "email": user_data.get("email", ""), "avatar": user_data.get("avatar", ""), "access_token": token, "refresh_token": token}
     except AuthenticationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     raise HTTPException(status_code=400, detail="Invalid credentials")
@@ -129,13 +175,13 @@ def register(req: RegisterRequest, response: Response):
         PasswordHandler.register(req.mobile, req.pin, req.security_question, req.security_answer)
         token = TokenManager.create_access_token({"sub": req.mobile})
         response.set_cookie(key="stm_token", value=token, httponly=True, secure=IS_PROD, samesite="none" if IS_PROD else "lax", max_age=604800)
-        return {"user_id": req.mobile}
+        return {"user_id": req.mobile, "access_token": token, "refresh_token": token}
     except AuthenticationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/auth/question")
 def get_security_question(mobile: str):
-    if mobile.strip() == "demo_user":
+    if mobile.strip() == "demo_user" or mobile.startswith("demo_"):
         raise HTTPException(status_code=400, detail="Demo user does not have a security question.")
     try:
         q = PasswordHandler.get_user_security_question(mobile)
@@ -144,8 +190,8 @@ def get_security_question(mobile: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 class RecoverRequest(BaseModel):
-    mobile: str
-    answer: str
+    mobile: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-\.\@]+$")
+    answer: str = Field(..., max_length=300)
 
 @app.post("/api/auth/recover")
 def recover_pin(req: RecoverRequest):
@@ -162,8 +208,8 @@ def logout(response: Response):
 
 @app.get("/api/auth/me")
 def get_current_user_profile(current_user: str = Depends(get_current_user)):
-    if current_user == "demo_user":
-        return {"user_id": "demo_user", "name": "Demo User", "email": "", "avatar": ""}
+    if current_user == "demo_user" or current_user.startswith("demo_") or current_user.startswith("guest"):
+        return {"user_id": current_user, "name": "Demo User", "email": "", "avatar": ""}
     user_data = PasswordDB.get_user(current_user)
     if not user_data:
         raise HTTPException(status_code=404, detail="User not found")
@@ -174,8 +220,20 @@ def get_current_user_profile(current_user: str = Depends(get_current_user)):
         "avatar": user_data.get("avatar", "")
     }
 
+def is_safe_redirect_uri(uri: str, allowed_origins: list) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(uri)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        return origin in allowed_origins or uri in allowed_origins
+    except Exception:
+        return False
+
 @app.get("/api/auth/google/url")
 def get_google_url(redirect_uri: str):
+    # Prevent Open Redirect Vulnerability
+    if not is_safe_redirect_uri(redirect_uri, ALLOWED_ORIGINS):
+        raise HTTPException(status_code=400, detail="Invalid redirect URI")
+        
     client_id = os.getenv("GOOGLE_CLIENT_ID", "")
     if not client_id:
         raise HTTPException(status_code=500, detail="Google SSO not configured")
@@ -202,12 +260,16 @@ def get_google_url(redirect_uri: str):
     return {"url": url}
 
 class GoogleCallbackRequest(BaseModel):
-    code: str
-    state: str
-    redirect_uri: str
+    code: str = Field(..., max_length=1000)
+    state: str = Field(..., max_length=1000)
+    redirect_uri: str = Field(..., max_length=1000)
 
 @app.post("/api/auth/google/callback")
 def google_callback(req: GoogleCallbackRequest, response: Response):
+    # Prevent Open Redirect Vulnerability
+    if not is_safe_redirect_uri(req.redirect_uri, ALLOWED_ORIGINS):
+        raise HTTPException(status_code=400, detail="Invalid redirect URI")
+
     client_id = os.getenv("GOOGLE_CLIENT_ID", "")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
     if not client_id or not client_secret:
@@ -228,11 +290,11 @@ def google_callback(req: GoogleCallbackRequest, response: Response):
     return {"email": email}
 
 class CompleteSSORegistration(BaseModel):
-    email: str
-    mobile: str
-    pin: str
-    security_question: str
-    security_answer: str
+    email: str = Field(..., max_length=100)
+    mobile: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-\.\@]+$")
+    pin: str = Field(..., max_length=6, pattern=r"^[0-9]+$")
+    security_question: str = Field(..., max_length=300)
+    security_answer: str = Field(..., max_length=300)
 
 @app.post("/api/auth/google/complete")
 def complete_sso(req: CompleteSSORegistration, response: Response):
@@ -254,18 +316,18 @@ def complete_sso(req: CompleteSSORegistration, response: Response):
         token = TokenManager.create_access_token({"sub": req.mobile})
         response.set_cookie(key="stm_token", value=token, httponly=True, secure=IS_PROD, samesite="none" if IS_PROD else "lax", max_age=604800)
 
-        return {"user_id": req.mobile}
+        return {"user_id": req.mobile, "access_token": token, "refresh_token": token}
     except AuthenticationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 class ProfileEditRequest(BaseModel):
     user_id: str
-    name: str
-    email: str
-    pin: str = ""
-    avatar: str = ""
-    security_question: str = ""
-    security_answer: str = ""
+    name: str = Field(..., max_length=100)
+    email: str = Field(..., max_length=100)
+    pin: str = Field("", max_length=6)
+    avatar: str = Field("", max_length=1000)
+    security_question: str = Field("", max_length=300)
+    security_answer: str = Field("", max_length=300)
 
 @app.put("/api/profile/edit")
 def edit_profile(req: ProfileEditRequest, current_user: str = Depends(get_current_user)):
@@ -289,7 +351,7 @@ def delete_account(current_user: str = Depends(get_current_user), response: Resp
 # --- Tasks Endpoints ---
 class UpdateTaskStatus(BaseModel):
     task_id: int
-    status: str
+    status: str = Field(..., max_length=20)
     user_id: str = ""
 
 @app.get("/api/tasks")
@@ -311,11 +373,11 @@ async def get_tasks(user_id: str = Depends(get_current_user)):
         return {"tasks": []}
 
 class AddTaskRequest(BaseModel):
-    task: str
-    priority: str
+    task: str = Field(..., max_length=500)
+    priority: str = Field(..., max_length=20)
     user_id: str = ""
-    date: Optional[str] = None
-    shared_with: Optional[str] = ""
+    date: Optional[str] = Field(None, max_length=20)
+    shared_with: Optional[str] = Field("", max_length=200)
 
 @app.post("/api/tasks")
 async def add_manual_task(req: AddTaskRequest, current_user: str = Depends(get_current_user)):
@@ -325,11 +387,12 @@ async def add_manual_task(req: AddTaskRequest, current_user: str = Depends(get_c
         await asyncio.to_thread(tools.add_task, req.task, req.priority, req.date, req.shared_with, req.user_id)
         return {"message": "Success"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Task creation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 class ShareTaskRequest(BaseModel):
     task_id: int
-    shared_with: str
+    shared_with: str = Field(..., max_length=50)
     user_id: str = ""
 
 @app.put("/api/tasks/share")
@@ -356,13 +419,14 @@ async def share_task(req: ShareTaskRequest, current_user: str = Depends(get_curr
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Task share failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 class EditTaskRequest(BaseModel):
     task_id: int
     user_id: str = ""
-    task: str
-    priority: str
+    task: str = Field(..., max_length=500)
+    priority: str = Field(..., max_length=20)
 
 @app.put("/api/tasks/edit")
 async def edit_task(req: EditTaskRequest, current_user: str = Depends(get_current_user)):
@@ -379,7 +443,8 @@ async def edit_task(req: EditTaskRequest, current_user: str = Depends(get_curren
             trigger_pusher_update()
             return {"message": "Success"}
     except Exception as e:
-        return {"message": str(e)}
+        logger.error(f"Task edit failed: {e}", exc_info=True)
+        return {"message": "Internal server error"}
 
 @app.put("/api/tasks")
 async def update_task(req: UpdateTaskStatus, current_user: str = Depends(get_current_user)):
@@ -395,7 +460,8 @@ async def update_task(req: UpdateTaskStatus, current_user: str = Depends(get_cur
             trigger_pusher_update()
             return {"message": "Success"}
     except Exception as e:
-        return {"message": str(e)}
+        logger.error(f"Task status update failed: {e}", exc_info=True)
+        return {"message": "Internal server error"}
 
 @app.delete("/api/tasks/done")
 async def clear_done_tasks_api(user_id: str = Depends(get_current_user)):
@@ -409,7 +475,8 @@ async def clear_done_tasks_api(user_id: str = Depends(get_current_user)):
             if cleared_count > 0: trigger_pusher_update()
             return {"message": "Success", "cleared": cleared_count}
     except Exception as e:
-        return {"message": str(e)}
+        logger.error(f"Clear done tasks failed: {e}", exc_info=True)
+        return {"message": "Internal server error"}
 
 @app.delete("/api/tasks/{task_id}")
 async def delete_task(task_id: int, user_id: str = Depends(get_current_user)):
@@ -423,7 +490,8 @@ async def delete_task(task_id: int, user_id: str = Depends(get_current_user)):
             trigger_pusher_update()
             return {"message": "Success"}
     except Exception as e:
-        return {"message": str(e)}
+        logger.error(f"Task deletion failed: {e}", exc_info=True)
+        return {"message": "Internal server error"}
 
 # --- Expenses Endpoints ---
 @app.get("/api/expenses")
@@ -444,15 +512,16 @@ async def get_expenses(user_id: str = Depends(get_current_user)):
                     if pd.isna(v) or str(v).lower() == "nan": r[k] = ""
             return {"expenses": records}
         except Exception as e:
+            logger.error(f"Read expenses failed: {e}", exc_info=True)
             return {"expenses": []}
     return await asyncio.to_thread(_read_expenses)
 
 class AddExpenseRequest(BaseModel):
     user_id: str = ""
     amount: float
-    category: str
-    description: str
-    date: str
+    category: str = Field(..., max_length=50)
+    description: str = Field(..., max_length=200)
+    date: str = Field(..., max_length=20)
 
 @app.post("/api/expenses")
 def add_expense(req: AddExpenseRequest, current_user: str = Depends(get_current_user)):
@@ -462,15 +531,16 @@ def add_expense(req: AddExpenseRequest, current_user: str = Depends(get_current_
         tools.add_expense(req.amount, req.category, req.description, req.date, req.user_id)
         return {"message": "Success"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Add expense failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 class EditExpenseRequest(BaseModel):
     expense_id: int
     user_id: str = ""
     amount: float
-    category: str
-    description: str
-    date: str
+    category: str = Field(..., max_length=50)
+    description: str = Field(..., max_length=200)
+    date: str = Field(..., max_length=20)
 
 @app.put("/api/expenses/edit")
 async def edit_expense(req: EditExpenseRequest, current_user: str = Depends(get_current_user)):
@@ -489,7 +559,8 @@ async def edit_expense(req: EditExpenseRequest, current_user: str = Depends(get_
             trigger_pusher_update()
             return {"message": "Success"}
     except Exception as e:
-        return {"message": str(e)}
+        logger.error(f"Edit expense failed: {e}", exc_info=True)
+        return {"message": "Internal server error"}
 
 # --- Recurring Expenses Endpoints ---
 def load_recurring_expenses_data():
@@ -531,8 +602,8 @@ def get_recurring_expenses(user_id: str = Depends(get_current_user)):
 class AddRecurringExpenseRequest(BaseModel):
     user_id: str = ""
     amount: float
-    category: str
-    description: str
+    category: str = Field(..., max_length=50)
+    description: str = Field(..., max_length=200)
 
 @app.post("/api/expenses/recurring")
 def add_recurring_expense(req: AddRecurringExpenseRequest, current_user: str = Depends(get_current_user)):
@@ -561,9 +632,9 @@ def delete_recurring_expense(exp_id: str, user_id: str = Depends(get_current_use
 
 class CheckRecurringRequest(BaseModel):
     user_id: str = ""
-    exp_id: str
-    action: str
-    date: str
+    exp_id: str = Field(..., max_length=50)
+    action: str = Field(..., max_length=50)
+    date: str = Field(..., max_length=20)
 
 @app.post("/api/expenses/recurring/check")
 def check_recurring_expense(req: CheckRecurringRequest, current_user: str = Depends(get_current_user)):
@@ -592,29 +663,30 @@ async def delete_expense(expense_id: int, user_id: str = Depends(get_current_use
             trigger_pusher_update()
             return {"message": "Success"}
     except Exception as e:
-        return {"message": str(e)}
+        logger.error(f"Delete expense failed: {e}", exc_info=True)
+        return {"message": "Internal server error"}
 
 # --- Routines Endpoints ---
 class AddRoutineRequest(BaseModel):
     user_id: str = ""
-    name: str
-    start: str
-    end: str
+    name: str = Field(..., max_length=100)
+    start: str = Field(..., max_length=10)
+    end: str = Field(..., max_length=10)
     days: List[str]
 
 class RoutineCheckRequest(BaseModel):
     user_id: str = ""
-    routine_id: str
-    action: str
-    time: str
-    date: str
+    routine_id: str = Field(..., max_length=50)
+    action: str = Field(..., max_length=50)
+    time: str = Field(..., max_length=10)
+    date: str = Field(..., max_length=20)
 
 class EditRoutineRequest(BaseModel):
     user_id: str = ""
-    routine_id: str
-    name: str
-    start: str
-    end: str
+    routine_id: str = Field(..., max_length=50)
+    name: str = Field(..., max_length=100)
+    start: str = Field(..., max_length=10)
+    end: str = Field(..., max_length=10)
 
 def load_routines_data():
     if not os.path.exists(ROUTINES_FILE):
@@ -694,7 +766,7 @@ async def check_routine(req: RoutineCheckRequest, current_user: str = Depends(ge
 # --- Archive Endpoints ---
 class AddArchiveRequest(BaseModel):
     user_id: str = ""
-    content: str
+    content: str = Field(..., max_length=100000)
 
 ARCHIVE_DIR = "archives"
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
@@ -735,7 +807,7 @@ async def update_archive(req: AddArchiveRequest, current_user: str = Depends(get
 
 # --- AI/Assistant Endpoints ---
 class ChatRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(..., max_length=3000)
     user_id: str = ""
     history: List[Dict[str, Any]]
     language: Optional[str] = "English"
@@ -758,8 +830,8 @@ async def chat(req: ChatRequest, current_user: str = Depends(get_current_user)):
     return {"response": response_text}
 
 class LearnRequest(BaseModel):
-    topic: str
-    language: str
+    topic: str = Field(..., max_length=1000)
+    language: str = Field(..., max_length=50)
 
 @app.post("/api/learn")
 async def learn(req: LearnRequest, current_user: str = Depends(get_current_user)):
@@ -767,23 +839,33 @@ async def learn(req: LearnRequest, current_user: str = Depends(get_current_user)
     return {"content": content}
 
 class ResumeRequest(BaseModel):
-    user_info: str
-    job_desc: str
-    language: str
+    user_info: str = Field(..., max_length=20000)
+    job_desc: str = Field(..., max_length=10000)
+    language: str = Field(..., max_length=50)
 
 @app.post("/api/resume")
 async def generate_resume(req: ResumeRequest, current_user: str = Depends(get_current_user)):
     content = await asyncio.to_thread(generate_tailored_resume, req.user_info, req.job_desc, req.language)
     return {"content": content}
 
+MAX_FILE_SIZE = 5 * 1024 * 1024 # 5 MB
+
 @app.post("/api/parse-pdf")
 async def parse_pdf(file: UploadFile = File(...), current_user: str = Depends(get_current_user)):
+    # Prevent Large File Upload DoS
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 5MB.")
+        
     def _parse():
         try:
             import PyPDF2
             reader = PyPDF2.PdfReader(file.file)
-            text = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+            text = "\n".join([p.extract_text() for p in reader.pages[:10] if p.extract_text()])[:20000]
             return {"text": text}
         except Exception as e:
+            logger.error(f"PDF Parse failed: {e}", exc_info=True)
             return {"text": ""}
     return await asyncio.to_thread(_parse)

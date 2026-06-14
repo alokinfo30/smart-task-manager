@@ -201,6 +201,7 @@ export default function ChatAgent() {
             {isListening ? '🛑' : '🎤'}
           </button>
           <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type a command..." style={{ flex: 1, padding: '0.75rem', borderRadius: '4px', border: '1px solid #D1D5DB' }} disabled={isLoading} />
+          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} maxLength={2000} placeholder="Type a command..." style={{ flex: 1, padding: '0.75rem', borderRadius: '4px', border: '1px solid #D1D5DB' }} disabled={isLoading} autoComplete="off" />
           <button type="submit" disabled={isLoading || !input.trim()} style={{ padding: '0.75rem 1.5rem', background: isLoading || !input.trim() ? '#9CA3AF' : '#3B82F6', color: 'white', border: 'none', borderRadius: '4px', cursor: isLoading || !input.trim() ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>Send</button>
         </form>
       </div>

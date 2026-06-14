@@ -60,7 +60,7 @@ from auth import SessionManager, PasswordHandler, PasswordDB, AuthenticationErro
 from translations import get_text
 import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from backend.database import SyncSessionLocal, TaskDB, ExpenseDB, UserDB, SessionDB
+from backend.database import SyncSessionLocal, TaskDB, ExpenseDB, UserDB, SessionDB, Base, sync_engine
 
 load_dotenv()
 
@@ -169,6 +169,9 @@ def render_pusher_client():
 def parse_task_name_from_prompt(prompt: str) -> str | None:
     """Extract a direct task name from an explicit add-task request."""
     if not prompt or not isinstance(prompt, str):
+        return None
+        
+    if len(prompt) > 2000: # Mitigate ReDoS on extremely long prompts
         return None
 
     prompt_clean = prompt.strip()
@@ -445,10 +448,10 @@ def render_auth_ui():
             st.sidebar.subheader("Complete Your Profile")
             st.sidebar.info(f"Linked Email: {st.session_state.sso_email}\n\nPlease set up your Mobile Number, PIN, and Security Question to complete registration and enable PIN recovery.")
             
-            sso_mobile = st.sidebar.text_input("Mobile Number", placeholder="e.g. 9876543210")
-            sso_pin = st.sidebar.text_input("6-Digit PIN", type="password")
+            sso_mobile = st.sidebar.text_input("Mobile Number", placeholder="e.g. 9876543210", max_chars=50)
+            sso_pin = st.sidebar.text_input("6-Digit PIN", type="password", max_chars=6)
             sso_q = st.sidebar.selectbox("Security Question", SECURITY_QUESTIONS)
-            sso_a = st.sidebar.text_input("Answer")
+            sso_a = st.sidebar.text_input("Answer", max_chars=300)
             
             if st.sidebar.button("Complete Registration", width="stretch"):
                 try:
@@ -498,8 +501,8 @@ def render_auth_ui():
         st.sidebar.divider()
 
         st.sidebar.subheader(get_text("📱 Mobile Number & PIN", lang))
-        mobile_input = st.sidebar.text_input(get_text("Mobile Number", lang), placeholder="e.g. 9876543210", key="auth_mobile")
-        pin_input = st.sidebar.text_input(get_text("6-Digit PIN", lang), type="password", help="Enter your 6-digit PIN", key="auth_pin")
+        mobile_input = st.sidebar.text_input(get_text("Mobile Number", lang), placeholder="e.g. 9876543210", key="auth_mobile", max_chars=50)
+        pin_input = st.sidebar.text_input(get_text("6-Digit PIN", lang), type="password", help="Enter your 6-digit PIN", key="auth_pin", max_chars=6)
         remember_me = st.sidebar.checkbox(get_text("Remember Me", lang), value=True, help="Keep me logged in even after page refresh")
 
         if not mobile_input or len(mobile_input) < 10:
@@ -517,7 +520,7 @@ def render_auth_ui():
                 <div id="status" style="padding: 10px; background: #e8f4f8; border-radius: 5px; margin-bottom: 10px; font-size: 14px;">
                     <button id="init-btn" style="background: #2196F3; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;">📥 Download & Start Local Engine (~1.5GB)</button>
                 </div>
-                <textarea id="prompt-input" style="width: 100%; height: 80px; padding: 10px; border-radius: 5px; border: 1px solid #ccc; margin-bottom: 10px;" placeholder="Ask your local browser AI..."></textarea>
+                <textarea id="prompt-input" style="width: 100%; height: 80px; padding: 10px; border-radius: 5px; border: 1px solid #ccc; margin-bottom: 10px;" placeholder="Ask your local browser AI..." maxlength="2000"></textarea>
                 <button id="ask-btn" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;" disabled>Ask Local AI</button>
                 <div id="response-output" style="margin-top: 15px; padding: 10px; border-left: 4px solid #4CAF50; background: #f9f9f9; min-height: 50px; white-space: pre-wrap;"></div>
             </div>
@@ -635,7 +638,7 @@ def render_auth_ui():
         if st.session_state.get("show_reg_form", False):
             with st.sidebar.expander(get_text("Complete Registration", lang), expanded=True):
                 q = st.selectbox(get_text("Security Question", lang), SECURITY_QUESTIONS)
-                a = st.text_input(get_text("Answer", lang), placeholder="Your secret answer")
+                a = st.text_input(get_text("Answer", lang), placeholder="Your secret answer", max_chars=300)
                 if st.button(get_text("Confirm Registration", lang), width="stretch"):
                     try:
                         if PasswordHandler.register(mobile_input, pin_input, q, a):
@@ -667,7 +670,7 @@ def render_auth_ui():
                 try:
                     question = PasswordHandler.get_user_security_question(mobile_input)
                     st.write(f"**Question**: {question}")
-                    ans = st.text_input(get_text("Answer", lang), type="password")
+                    ans = st.text_input(get_text("Answer", lang), type="password", max_chars=300)
                     if st.button(get_text("Verify & Show New PIN", lang)):
                         new_p = PasswordHandler.verify_answer_and_reset_pin(mobile_input, ans)
                         st.success(get_text("Recovery Successful!", lang))
@@ -678,47 +681,6 @@ def render_auth_ui():
                 if st.button(get_text("Cancel", lang)):
                     st.session_state.forgot_pin_flow = False
                     st.rerun()
-                    
-        # --- Admin Panel ---
-        st.sidebar.divider()
-        with st.sidebar.expander("🛠️ Admin Panel", expanded=False):
-            if st.button("Wipe All Real Users", type="primary", use_container_width=True):
-                deleted_count = 0
-                deleted_mobiles = []
-                try:
-                    with SyncSessionLocal() as session:
-                        users = session.query(UserDB).all()
-                        for user in users:
-                            mobile = str(user.mobile)
-                            # Skip guest and demo accounts
-                            if not mobile.startswith('demo_') and not mobile.startswith('guest') and mobile != 'demo_user':
-                                session.delete(user)
-                                session.query(SessionDB).filter(SessionDB.mobile == mobile).delete(synchronize_session=False)
-                                session.query(TaskDB).filter(TaskDB.owner == mobile).delete(synchronize_session=False)
-                                session.query(ExpenseDB).filter(ExpenseDB.owner == mobile).delete(synchronize_session=False)
-                                deleted_mobiles.append(mobile)
-                                deleted_count += 1
-                        session.commit()
-
-                    for filepath in [ROUTINES_FILE, RECURRING_EXPENSES_FILE]:
-                        if os.path.exists(filepath):
-                            with open(filepath, 'r', encoding='utf-8') as f:
-                                data = json.load(f)
-                            changed = False
-                            for mobile in deleted_mobiles:
-                                if mobile in data:
-                                    del data[mobile]
-                                    changed = True
-                            if changed:
-                                with open(filepath, 'w', encoding='utf-8') as f:
-                                    json.dump(data, f, indent=4)
-                    
-                    for mobile in deleted_mobiles:
-                        resume_file = f"resume_profile_{mobile}.txt"
-                        if os.path.exists(resume_file): os.remove(resume_file)
-                    st.success(f"Successfully wiped {deleted_count} real user(s) and their data.")
-                except Exception as e:
-                    st.error(f"Error wiping users: {str(e)}")
             
         st.sidebar.divider()
         return "guest"
@@ -751,7 +713,8 @@ def render_auth_ui():
                     if st.session_state.current_user in re_data:
                         del re_data[st.session_state.current_user]
                         save_recurring_expenses_data(re_data)
-                    p_file = f"resume_profile_{st.session_state.current_user}.txt"
+                    safe_current_user = "".join(c for c in str(st.session_state.current_user) if c.isalnum() or c in ("_", "-", "@", "."))
+                    p_file = f"resume_profile_{safe_current_user}.txt"
                     if os.path.exists(p_file): os.remove(p_file)
                 except Exception:
                     pass
@@ -761,6 +724,47 @@ def render_auth_ui():
             st.session_state.auth_method = None
             st.query_params.clear() # type: ignore
             st.rerun()
+            
+        # --- Secure Admin Panel ---
+        admin_id = os.getenv("ADMIN_MOBILE")
+        if admin_id and st.session_state.current_user == admin_id:
+            st.sidebar.divider()
+            with st.sidebar.expander("🛠️ Admin Panel", expanded=False):
+                if st.button("Wipe All Real Users", type="primary", use_container_width=True):
+                    deleted_count = 0
+                    deleted_mobiles = []
+                    try:
+                        with SyncSessionLocal() as session:
+                            users = session.query(UserDB).all()
+                            for user in users:
+                                mobile = str(user.mobile)
+                                if not mobile.startswith('demo_') and not mobile.startswith('guest') and mobile != 'demo_user' and mobile != admin_id:
+                                    session.delete(user)
+                                    session.query(SessionDB).filter(SessionDB.mobile == mobile).delete(synchronize_session=False)
+                                    session.query(TaskDB).filter(TaskDB.owner == mobile).delete(synchronize_session=False)
+                                    session.query(ExpenseDB).filter(ExpenseDB.owner == mobile).delete(synchronize_session=False)
+                                    deleted_mobiles.append(mobile)
+                                    deleted_count += 1
+                            session.commit()
+    
+                        for filepath in [ROUTINES_FILE, RECURRING_EXPENSES_FILE]:
+                            if os.path.exists(filepath):
+                                with open(filepath, 'r', encoding='utf-8') as f: data = json.load(f)
+                                changed = False
+                                for mobile in deleted_mobiles:
+                                    if mobile in data:
+                                        del data[mobile]
+                                        changed = True
+                                if changed:
+                                    with open(filepath, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4)
+                        
+                        for mobile in deleted_mobiles:
+                            safe_mobile = "".join(c for c in str(mobile) if c.isalnum() or c in ("_", "-", "@", "."))
+                            resume_file = f"resume_profile_{safe_mobile}.txt"
+                            if os.path.exists(resume_file): os.remove(resume_file)
+                        st.success(f"Successfully wiped {deleted_count} real user(s) and their data.")
+                    except Exception as e:
+                        st.error(f"Error wiping users: {str(e)}")
         
         return st.session_state.current_user
 
@@ -769,18 +773,22 @@ def main():
     # Set page configuration (This MUST be the first Streamlit command and called only once)
     st.set_page_config(page_title="Smart Task Manager - AI Powered Assistant", page_icon="🚀", layout="wide")
 
+    # Ensure database tables are created (Critical for Streamlit Cloud)
+    Base.metadata.create_all(bind=sync_engine)
+
     # Load Google Analytics ID from .env
     ga_id = os.getenv("GA_MEASUREMENT_ID")
     ga_script = ""
     if ga_id:
+        ga_id_safe = "".join(c for c in ga_id if c.isalnum() or c in "-_")
         ga_script = f"""
         <!-- Google Analytics (GA4) Tracking Snippet -->
-        <script async src="https://www.googletagmanager.com/gtag/js?id={ga_id}"></script>
+        <script async src="https://www.googletagmanager.com/gtag/js?id={ga_id_safe}"></script>
         <script>
           window.dataLayer = window.dataLayer || [];
           function gtag(){{dataLayer.push(arguments);}}
           gtag('js', new Date());
-          gtag('config', '{ga_id}');
+          gtag('config', '{ga_id_safe}');
         </script>
         """
 
@@ -834,6 +842,15 @@ def main():
     # Guest Account Warning
     if current_user.startswith("guest") or current_user.startswith("demo_"):
         st.warning(get_text("⚠️ **Guest Mode**: All features are enabled, but no data will be saved for future purpose.", st.session_state.language))
+
+    def check_rate_limit(action_name="llm_call", limit_seconds=5):
+        """Prevents UI spamming that exhausts API quotas."""
+        now = time.time()
+        last_call = st.session_state.get(f"last_call_{action_name}", 0)
+        if now - last_call < limit_seconds:
+            st.toast("⏳ Please wait a few seconds before requesting again.", icon="⏳")
+            st.stop()
+        st.session_state[f"last_call_{action_name}"] = now
 
 
     render_dashboard(current_user)
@@ -951,11 +968,12 @@ def save_routines_data(data):
 def send_routine_notifications(routine_name, time_str, action):
     """Dispatch notifications via JS (Browser TTS/Desktop), Email, and Telegram."""
     message = f"Routine Alert: It is time to {action} {routine_name} at {time_str}"
+    safe_message = json.dumps(message)
     
     # 1. Browser TTS and Desktop Notification
     js_code = f"""
     <script>
-        const message = "{message}";
+        const message = {safe_message};
         if ('speechSynthesis' in window) {{
             var msg = new SpeechSynthesisUtterance(message);
             window.speechSynthesis.speak(msg);
@@ -1173,7 +1191,7 @@ def render_routines(current_user):
     # 1. Manage Routines Expander
     with st.expander(get_text("⚙️ Manage Routine Timings", lang), expanded=(len(user_data["settings"]) == 0)):
         with st.form("add_routine_form"):
-            r_name = st.text_input(get_text("Routine Name", lang))
+            r_name = st.text_input(get_text("Routine Name", lang), max_chars=100)
             c1, c2 = st.columns(2)
             r_start = c1.time_input(get_text("Expected Start Time", lang))
             r_end = c2.time_input(get_text("Expected End Time", lang))
@@ -1385,7 +1403,7 @@ def render_dashboard(current_user):
                 if pd.notna(row.get("SharedWith")) and row.get("SharedWith"):
                     display_df.at[idx, "SharedWith"] = ", ".join([mask_mobile(s.strip()) for s in str(row["SharedWith"]).split(",") if s.strip()])
 
-        search_query = st.text_input(get_text("🔍 Search tasks:", lang), "").lower()
+        search_query = st.text_input(get_text("🔍 Search tasks:", lang), "", max_chars=100).lower()
         if search_query:
             display_df = display_df[display_df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)]
 
@@ -1654,6 +1672,7 @@ def render_dashboard(current_user):
             del st.session_state.pending_agent_prompt
             
             with chat_container:
+                check_rate_limit("chat", limit_seconds=3)
                 with st.spinner(get_text("Assistant is thinking...", lang)):
                     report_content, updated_history = run_autonomous_agent(
                         prompt, st.session_state.agent_history, user_id=current_user, language=st.session_state.language
@@ -1678,7 +1697,7 @@ def render_dashboard(current_user):
         if pc1.button(get_text("🧩 Break down a task", lang), width="stretch"): prompt_clicked = "Break down a complex task"
         if pc2.button(get_text("📝 Create daily summary", lang), width="stretch"): prompt_clicked = "Create a daily technical summary"
 
-        user_command = st.chat_input(get_text("Ask your assistant...", st.session_state.language))
+        user_command = st.chat_input(get_text("Ask your assistant...", st.session_state.language), max_chars=2000)
         
         final_command = user_command or prompt_clicked
         
@@ -1770,7 +1789,8 @@ def render_dashboard(current_user):
                     get_text("Archived Reports", lang), 
                     archive_content, 
                     height=400,
-                    key="archive_content_editor"
+                    key="archive_content_editor",
+                    max_chars=200000
                 )
                 
                 # If changes are detected, show a Save button
@@ -1790,11 +1810,12 @@ def render_dashboard(current_user):
         st.header(get_text("📚 AI Learning & Practice", lang))
         st.markdown(get_text("Enter a topic to learn, or paste a job description to get a tailored learning plan.", lang))
 
-        topic = st.text_area(get_text("Enter Topic or Job Description:", lang), height=150, placeholder=get_text("e.g., Python Decorators, or paste a full job description here...", lang))
+        topic = st.text_area(get_text("Enter Topic or Job Description:", lang), height=150, max_chars=10000, placeholder=get_text("e.g., Python Decorators, or paste a full job description here...", lang))
         if st.button(get_text("🚀 Generate Lesson", lang)):
             if not topic.strip():
                 st.error(get_text("Please enter a topic or job description.", lang))
             else:
+                check_rate_limit("learning", limit_seconds=5)
                 with st.spinner(get_text("Generating lesson...", lang)):
                     lesson_content = generate_learning_content(topic.strip(), lang)
                     st.session_state[f"lesson_{current_user}"] = lesson_content
@@ -1847,7 +1868,8 @@ def render_dashboard(current_user):
         if not PDF_TOOLS_AVAILABLE:
             st.warning("⚠️ Please install 'PyPDF2' and 'fpdf' (e.g., `pip install PyPDF2 fpdf`) to fully enable PDF uploads and formatting.")
 
-        profile_file = f"resume_profile_{current_user}.txt"
+        safe_user_id = "".join(c for c in str(current_user) if c.isalnum() or c in ("_", "-", "@", "."))
+        profile_file = f"resume_profile_{safe_user_id}.txt"
         saved_profile = ""
         if os.path.exists(profile_file):
             with open(profile_file, "r", encoding="utf-8") as f:
@@ -1865,26 +1887,34 @@ def render_dashboard(current_user):
                     st.rerun()
 
             with st.expander(get_text("Or Fill Details Manually", lang)):
-                r_name = st.text_input(get_text("Full Name", lang))
-                r_mobile = st.text_input(get_text("Mobile Number", lang), key="resume_mobile_input")
-                r_email = st.text_input(get_text("Email ID", lang))
-                r_link = st.text_input(get_text("LinkedIn URL (Optional)", lang))
-                r_git = st.text_input(get_text("GitHub URL (Optional)", lang))
-                r_exp = st.text_area(get_text("Experiences (Roles, Companies, Dates)", lang), height=100)
-                r_edu = st.text_area(get_text("Education (Degrees, Institutions, Dates)", lang), height=100)
-                r_proj = st.text_area(get_text("Projects (Names, Tech Stack, Outcomes)", lang), height=100)
+                r_name = st.text_input(get_text("Full Name", lang), max_chars=100)
+                r_mobile = st.text_input(get_text("Mobile Number", lang), key="resume_mobile_input", max_chars=50)
+                r_email = st.text_input(get_text("Email ID", lang), max_chars=100)
+                r_link = st.text_input(get_text("LinkedIn URL (Optional)", lang), max_chars=200)
+                r_git = st.text_input(get_text("GitHub URL (Optional)", lang), max_chars=200)
+                r_exp = st.text_area(get_text("Experiences (Roles, Companies, Dates)", lang), height=100, max_chars=5000)
+                r_edu = st.text_area(get_text("Education (Degrees, Institutions, Dates)", lang), height=100, max_chars=5000)
+                r_proj = st.text_area(get_text("Projects (Names, Tech Stack, Outcomes)", lang), height=100, max_chars=5000)
             
         with rc2:
-            job_desc = st.text_area(get_text("Job Description (Target Role)", lang), height=300)
+            job_desc = st.text_area(get_text("Job Description (Target Role)", lang), height=300, max_chars=10000)
             
             if st.button(get_text("✨ Generate Tailored Resume", lang), width="stretch"):
                 combined_info = ""
                 new_extracted = ""
                 if uploaded_resume and PDF_TOOLS_AVAILABLE and uploaded_resume.name.endswith(".pdf"):
+                    if uploaded_resume.size > 5 * 1024 * 1024:
+                        st.error(get_text("File too large. Maximum size is 5MB.", lang))
+                        st.stop()
                     reader = PdfReader(uploaded_resume)
-                    new_extracted = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+                    new_extracted = "\n".join([p.extract_text() for p in reader.pages[:10] if p.extract_text()])
+                    new_extracted = new_extracted[:20000] # Prevent LLM token exhaustion DoS
                 elif uploaded_resume:
+                    if uploaded_resume.size > 1 * 1024 * 1024:
+                        st.error(get_text("Text file too large. Maximum size is 1MB.", lang))
+                        st.stop()
                     new_extracted = uploaded_resume.getvalue().decode("utf-8", errors="ignore")
+                    new_extracted = new_extracted[:20000]
                 
                 if new_extracted:
                     combined_info = new_extracted
@@ -1905,6 +1935,7 @@ def render_dashboard(current_user):
                             f.write(combined_info.strip())
                         st.success(get_text("Your profile has been automatically updated with the new details!", lang))
                         
+                    check_rate_limit("resume", limit_seconds=10)
                     with st.spinner(get_text("Generating resume...", lang)):
                         tailored_text = generate_tailored_resume(combined_info, job_desc, lang)
                         st.session_state[f"resume_output_{current_user}"] = tailored_text
@@ -1934,7 +1965,7 @@ def render_dashboard(current_user):
                     get_text("Food", lang), get_text("Transport", lang), 
                     get_text("Shopping", lang), get_text("Bills", lang), get_text("Other", lang)
                 ], key="re_category")
-                re_desc = st.text_input(get_text("Description", lang), key="re_desc")
+                re_desc = st.text_input(get_text("Description", lang), key="re_desc", max_chars=200)
                 
                 if st.form_submit_button(get_text("➕ Add Recurring Expense", lang)):
                     if re_amount > 0 and re_desc.strip():
@@ -2006,7 +2037,7 @@ def render_dashboard(current_user):
                 get_text("Food", lang), get_text("Transport", lang), 
                 get_text("Shopping", lang), get_text("Bills", lang), get_text("Other", lang)
             ])
-            e_desc = st.text_input(get_text("Description", lang))
+            e_desc = st.text_input(get_text("Description", lang), max_chars=200)
             e_date = st.date_input(get_text("Date", lang))
             
             if st.form_submit_button(get_text("➕ Add Expense", lang)):

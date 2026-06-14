@@ -19,14 +19,12 @@ export const metadata: Metadata = {
     statusBarStyle: 'default',
     title: 'Task Manager',
   },
+  manifest: '/manifest.json',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <link rel="manifest" href="/manifest.json" />
-      </head>
       <body suppressHydrationWarning>
         <AuthProvider>
         {children}

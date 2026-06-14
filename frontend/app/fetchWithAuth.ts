@@ -33,7 +33,8 @@ export const fetchWithAuth = async (
       const refreshResponse = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken })
+        body: JSON.stringify({ refresh_token: refreshToken }),
+        credentials: 'include'
       });
       
       if (refreshResponse.ok) {
@@ -78,7 +79,7 @@ export const fetchWithAuth = async (
     }
 
     try {
-      let response = await fetch(url, { ...options, headers });
+      let response = await fetch(url, { credentials: 'include', ...options, headers });
 
       // 2. Reactively refresh token if we get an unexpected 401
       if (response.status === 401 && !url.includes('/api/auth/')) {
@@ -86,7 +87,7 @@ export const fetchWithAuth = async (
           accessToken = await attemptRefresh(refreshToken, storage);
           if (accessToken) {
             headers.set('Authorization', `Bearer ${accessToken}`);
-            response = await fetch(url, { ...options, headers });
+            response = await fetch(url, { credentials: 'include', ...options, headers });
           }
         }
         

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import api from './api'; // The configured axios instance
+import { fetchWithAuth } from './app/fetchWithAuth';
 
 // Define the user type based on what /api/auth/me returns
 interface User {
@@ -33,34 +33,61 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
     }
 
-    const checkUserAuthentication = async () => {
+    const fetchUser = async () => {
       try {
-        // The stm_token cookie is sent automatically due to `withCredentials: true`
-        const response = await api.get('/api/auth/me');
-        setUser(response.data);
+        const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const response = await fetchWithAuth(`${API_BASE_URL}/api/auth/me`, {
+          method: 'GET'
+        });
+  
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data);
+        } else {
+          setUser(null);
+        }
       } catch (error) {
-        // If the /me endpoint fails (e.g., 401), the user is not logged in.
         setUser(null);
       } finally {
         setLoading(false);
       }
-    };
-    checkUserAuthentication();
+      };
+    
+      fetchUser();
   }, []);
 
   const login = async (username: string, password: string) => {
-    // The backend expects a JSON payload with "mobile" and "pin"
-    const response = await api.post('/api/auth/login', {
-      mobile: username,
-      pin: password
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile: username, pin: password }),
+      credentials: 'include'
     });
     
-    setUser(response.data);
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || 'Login failed');
+    }
+
+    const data = await response.json();
+    if (data.access_token) {
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token);
+    }
+    setUser(data);
     window.location.href = '/';
   };
 
    const logout = async () => {
-    await api.post('/api/auth/logout');
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    try {
+      await fetch(`${API_BASE_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+    } catch (e) {
+      console.error("Logout request failed", e);
+    }
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     setUser(null);
     window.location.href = '/login';
   };

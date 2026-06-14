@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import argparse
 import asyncio
 
 # 1. Get absolute paths
@@ -22,8 +23,14 @@ asyncio.run(init_db())
 os.chdir(root_dir)
 
 file_path = os.path.join(os.path.dirname(__file__), "raw_pins.json")
-mobile = "7985728148"
-new_pin = "226024"
+
+parser = argparse.ArgumentParser(description="Update a user's PIN manually.")
+parser.add_argument("--mobile", required=True, help="User's mobile number")
+parser.add_argument("--pin", required=True, help="New 6-digit PIN")
+args = parser.parse_args()
+
+mobile = args.mobile
+new_pin = args.pin
 
 data = {}
 if os.path.exists(file_path):
