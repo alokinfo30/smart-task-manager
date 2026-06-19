@@ -22,6 +22,9 @@ MACHINAOS_MODEL = os.getenv("MACHINAOS_MODEL", "machina-agent-v1")
 
 # Gemini Flash models are available completely FREE of cost on the Google AI Studio Free Tier
 MODEL_FALLBACKS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-latest",
     "gemini-1.5-flash"
 ]
 OFFLINE_MODEL = os.getenv("OFFLINE_MODEL", "llama3.2")
@@ -48,7 +51,7 @@ Capabilities:
 5. Maintain a professional, encouraging, and organized tone.
 6. Use the 'log_report' tool whenever you generate a detailed analysis, summary, or when the user asks to 'save' a response.
 7. When adding a task, only ask the user for the task name. You must automatically set the priority to 'High' and the date to the current date (today) when calling the 'add_task' tool. You can also specify a comma-separated list of user accounts (mobile numbers or emails) in the 'shared_with_accounts' argument if the user wants to share the task with specific individuals.
-8. Manage and analyze the user's daily and monthly finances using the 'add_expense', 'read_expenses', and 'delete_expense' tools when requested.
+8. Manage and analyze the user's daily and monthly finances using the 'add_expense', 'read_expenses', and 'delete_expense' tools when requested. When providing AI financial suggestions or analysis, your advice MUST be heavily personalized on the basis of the specific item, description, and amount to make the customer experience the best. When adding a task, include a helpful 'comment' detailing the purpose or reason. When updating a task, add a 'comment' summarizing the current status or reason.
 9. Generate learning materials on any topic or from a job description using the 'generate_lesson' tool.
 10. Create a tailored resume using the 'create_resume' tool when the user provides their details and a job description.
 11. Motivation & Strategy: Encourage users to improve their 'Sprint Speed' and reach 'Elite Executioner' rank by completing tasks quickly. Provide positive reinforcement. ALWAYS suggest the best strategic plan based on their pending tasks and daily routines to help them achieve peak productivity and become the best version of themselves.
@@ -282,8 +285,8 @@ def run_autonomous_agent(prompt: str, history: list = None, user_id: str = "gues
     def read_todo_list(*args, **kwargs):
         return tools.read_todo_list()
 
-    def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_accounts: str = "", **kwargs):
-        return tools.add_task(task=task, priority=priority, date=date, shared_with_accounts=shared_with_accounts, owner=user_id)
+    def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_accounts: str = "", comment: str = "", **kwargs):
+        return tools.add_task(task=task, priority=priority, date=date, shared_with_accounts=shared_with_accounts, owner=user_id, comment=comment)
 
     def delete_task(task_identifier: str, **kwargs):
         return tools.delete_task(task_identifier, owner=user_id)

@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import Pusher from 'pusher-js';
 import { fetchWithAuth } from './app/fetchWithAuth';
+import { useAppDispatch, useAppSelector } from './hooks';
+import { setTasks, setNewTaskText, setNewTaskPriority, setEditTaskId, setEditTaskData, setShareInput, toggleRevealedTask, setSearchQuery, setIsListening, appendNewTaskText } from './dashboardSlice';
 
 interface Task {
   id: number;
@@ -13,20 +15,59 @@ interface Task {
   completed_at: string;
   owner: string;
   shared_with: string;
+  comment?: string;
 }
 
 export default function DashboardClientWrapper({ session }: { session: string }) {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [newTaskText, setNewTaskText] = useState('');
-  const [newTaskPriority, setNewTaskPriority] = useState('High');
-  const [editTaskId, setEditTaskId] = useState<number | null>(null);
-  const [editTaskData, setEditTaskData] = useState({ task: '', priority: 'Medium' });
-  const [shareInputs, setShareInputs] = useState<Record<number, string>>({});
-  const [revealedTasks, setRevealedTasks] = useState<Record<number, boolean>>({});
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isListening, setIsListening] = useState(false);
+  const dispatch = useAppDispatch();
+  const { tasks, newTaskText, newTaskPriority, editTaskId, editTaskData, shareInputs, revealedTasks, searchQuery, isListening } = useAppSelector((state) => state.dashboard);
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+  const [pomoTime, setPomoTime] = useState(25 * 60);
+  const [isPomoActive, setIsPomoActive] = useState(false);
+  const [customPomoMinutes, setCustomPomoMinutes] = useState(25);
+
+  // Load custom Pomodoro time preference from storage
+  useEffect(() => {
+    const savedPomo = localStorage.getItem('userPomoMinutes');
+    if (savedPomo) {
+      setCustomPomoMinutes(parseInt(savedPomo, 10));
+      setPomoTime(parseInt(savedPomo, 10) * 60);
+    }
+  }, []);
+
+  // Fetch location for Currency & Happiness System Language
+  useEffect(() => {
+    fetch('https://ipapi.co/json/')
+      .then(res => res.json())
+      .then(data => {
+        if (data.currency) localStorage.setItem('userCurrency', data.currency);
+        const country = data.country_code;
+        let lang = 'English';
+        if (['ES', 'MX', 'AR'].includes(country)) lang = 'Spanish';
+        else if (country === 'IN') lang = 'Hindi';
+        else if (country === 'FR') lang = 'French';
+        localStorage.setItem('userLocationLanguage', lang);
+      })
+      .catch(() => console.error("Failed to fetch location"));
+  }, []);
+
+  // Pomodoro Timer Logic
+  useEffect(() => {
+    let interval: any;
+    if (isPomoActive && pomoTime > 0) {
+      interval = setInterval(() => setPomoTime(t => t - 1), 1000);
+    } else if (pomoTime === 0 && isPomoActive) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance("Focus session complete! Great job, take a short break."));
+      }
+      
+      setIsPomoActive(false);
+      setPomoTime(customPomoMinutes * 60);
+    }
+    return () => clearInterval(interval);
+  }, [isPomoActive, pomoTime, customPomoMinutes]);
 
   // Fetch tasks from the FastAPI backend
   const fetchTasks = async () => {
@@ -34,7 +75,7 @@ export default function DashboardClientWrapper({ session }: { session: string })
       const res = await fetchWithAuth(`${API_BASE_URL}/api/tasks`);
       if (res.ok) {
         const data = await res.json();
-        setTasks(data.tasks || []);
+        dispatch(setTasks(data.tasks || []));
       }
     } catch (error) {
       console.error("Failed to fetch tasks", error);
@@ -87,7 +128,7 @@ export default function DashboardClientWrapper({ session }: { session: string })
           shared_with: ""
         })
       });
-      setNewTaskText('');
+    dispatch(setNewTaskText(''));
       fetchTasks(); // Refresh the board
     } catch (error) {
       console.error("Failed to add task", error);
@@ -96,12 +137,21 @@ export default function DashboardClientWrapper({ session }: { session: string })
 
   // Handle Status Updates (Moving between columns)
   const updateStatus = async (taskId: number, newStatus: string) => {
+    const reason = window.prompt(`Moving to ${newStatus}. Add a reason/status update in detail:`);
     try {
       await fetchWithAuth(`${API_BASE_URL}/api/tasks`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_id: taskId, status: newStatus })
+        body: JSON.stringify({ task_id: taskId, status: newStatus, comment: reason || "" })
       });
+      if (newStatus === 'Working') {
+        setIsPomoActive(true);
+        if (pomoTime === 0 || !isPomoActive) {
+          setPomoTime(customPomoMinutes * 60);
+        }
+      } else if (newStatus === 'Pending' || newStatus === 'Done') {
+        setIsPomoActive(false);
+      }
       fetchTasks(); // Refresh the board
     } catch (error) {
       console.error("Failed to update status", error);
@@ -124,9 +174,9 @@ export default function DashboardClientWrapper({ session }: { session: string })
       await fetchWithAuth(`${API_BASE_URL}/api/tasks/edit`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_id: editTaskId, task: editTaskData.task, priority: editTaskData.priority })
+        body: JSON.stringify({ task_id: editTaskId, task: editTaskData.task, priority: editTaskData.priority, comment: editTaskData.comment })
       });
-      setEditTaskId(null);
+    dispatch(setEditTaskId(null));
       fetchTasks();
     } catch (e) { console.error(e); }
   };
@@ -140,8 +190,18 @@ export default function DashboardClientWrapper({ session }: { session: string })
   };
 
   const shareTask = async (taskId: number) => {
-    const mobile = shareInputs[taskId];
+    let mobile = shareInputs[taskId];
     if (!mobile) return;
+
+    // Auto-clean mobile numbers (Leave emails untouched)
+    if (!mobile.includes('@')) {
+      mobile = mobile.replace(/\D/g, '');
+      if (mobile.length !== 10) {
+        alert("Mobile number must be exactly 10 digits.");
+        return;
+      }
+    }
+
     try {
       const res = await fetchWithAuth(`${API_BASE_URL}/api/tasks/share`, {
         method: 'PUT',
@@ -152,7 +212,7 @@ export default function DashboardClientWrapper({ session }: { session: string })
         const errData = await res.json();
         throw new Error(errData.detail || "Failed to share task");
       }
-      setShareInputs(prev => ({ ...prev, [taskId]: '' }));
+    dispatch(setShareInput({ id: taskId, value: '' }));
       fetchTasks();
     } catch (e: any) { alert(e.message || "Failed to share task"); }
   };
@@ -173,18 +233,24 @@ export default function DashboardClientWrapper({ session }: { session: string })
     if (!SpeechRecognition) return alert("Voice input not supported in your browser.");
     
     if (isListening) {
-      setIsListening(false);
+      dispatch(setIsListening(false));
       return;
     }
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
     recognition.start();
-    setIsListening(true);
+    dispatch(setIsListening(true));
     
-    recognition.onresult = (event: any) => setNewTaskText(prev => (prev + " " + event.results[0][0].transcript).trim());
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
+    recognition.onresult = (event: any) => dispatch(appendNewTaskText(event.results[0][0].transcript));
+    recognition.onend = () => dispatch(setIsListening(false));
+    recognition.onerror = () => dispatch(setIsListening(false));
+  };
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   };
 
   const filteredTasks = tasks.filter(t => t.task.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -204,8 +270,8 @@ export default function DashboardClientWrapper({ session }: { session: string })
           <button type="button" onClick={toggleDictation} style={{ padding: '0.75rem', background: isListening ? '#EF4444' : '#E5E7EB', color: isListening ? 'white' : '#374151', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Voice Dictation">
             {isListening ? '🛑' : '🎤'}
           </button>
-          <input type="text" value={newTaskText} onChange={(e) => setNewTaskText(e.target.value)} placeholder="E.g., Review monthly budget..." style={{ flex: 1, padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px' }} required />
-          <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value)} style={{ padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px' }}>
+        <input type="text" value={newTaskText} onChange={(e) => dispatch(setNewTaskText(e.target.value))} placeholder="E.g., Review monthly budget..." style={{ flex: 1, padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px' }} required />
+        <select value={newTaskPriority} onChange={(e) => dispatch(setNewTaskPriority(e.target.value))} style={{ padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px' }}>
             <option value="High">High Priority</option>
             <option value="Medium">Medium Priority</option>
             <option value="Low">Low Priority</option>
@@ -215,8 +281,22 @@ export default function DashboardClientWrapper({ session }: { session: string })
       </div>
 
       {/* Search Tasks */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        <input type="text" placeholder="🔍 Search tasks..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ width: '100%', padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px', boxSizing: 'border-box' }} />
+      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <input type="text" placeholder="🔍 Search tasks..." value={searchQuery} onChange={e => dispatch(setSearchQuery(e.target.value))} style={{ flex: 1, padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px', boxSizing: 'border-box', minWidth: '200px' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: isPomoActive ? '#FEF2F2' : '#F3F4F6', padding: '0.5rem 1rem', borderRadius: '8px', border: `1px solid ${isPomoActive ? '#FCA5A5' : '#D1D5DB'}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontWeight: 'bold', color: '#374151', fontSize: '0.9rem' }}>🍅 Mins:</span>
+            <input type="number" min="1" max="120" value={customPomoMinutes} onChange={e => {
+              const val = parseInt(e.target.value) || 25;
+              setCustomPomoMinutes(val);
+              localStorage.setItem('userPomoMinutes', val.toString());
+              if (!isPomoActive) setPomoTime(val * 60);
+            }} disabled={isPomoActive} style={{ width: '60px', padding: '0.25rem', borderRadius: '4px', border: '1px solid #D1D5DB' }} />
+          </div>
+          <span style={{ fontWeight: 'bold', color: isPomoActive ? '#B91C1C' : '#374151', fontSize: '1.2rem', fontFamily: 'monospace' }}>{formatTime(pomoTime)}</span>
+          <button onClick={() => setIsPomoActive(!isPomoActive)} style={{ padding: '0.4rem 0.8rem', background: isPomoActive ? '#EF4444' : '#10B981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{isPomoActive ? 'Pause' : 'Start Focus'}</button>
+          <button onClick={() => { setIsPomoActive(false); setPomoTime(customPomoMinutes * 60); }} style={{ padding: '0.4rem 0.8rem', background: '#6B7280', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Reset</button>
+        </div>
       </div>
 
       {/* Kanban Board */}
@@ -229,17 +309,21 @@ export default function DashboardClientWrapper({ session }: { session: string })
               <div key={task.id} style={{ background: 'white', padding: '1rem', borderRadius: '6px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', marginBottom: '1rem', borderLeft: `4px solid ${task.priority === 'High' ? '#EF4444' : task.priority === 'Medium' ? '#F59E0B' : '#10B981'}` }}>
                 {editTaskId === task.id ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    <input type="text" value={editTaskData.task} onChange={e => setEditTaskData({...editTaskData, task: e.target.value})} style={{ padding: '0.5rem', border: '1px solid #D1D5DB', borderRadius: '4px' }} />
-                    <select value={editTaskData.priority} onChange={e => setEditTaskData({...editTaskData, priority: e.target.value})} style={{ padding: '0.5rem', border: '1px solid #D1D5DB', borderRadius: '4px' }}>
+                <input type="text" value={editTaskData.task} onChange={e => dispatch(setEditTaskData({...editTaskData, task: e.target.value}))} style={{ padding: '0.5rem', border: '1px solid #D1D5DB', borderRadius: '4px' }} />
+                <textarea value={editTaskData.comment} onChange={e => dispatch(setEditTaskData({...editTaskData, comment: e.target.value}))} placeholder="Add a comment or detail status reason..." style={{ padding: '0.5rem', border: '1px solid #D1D5DB', borderRadius: '4px', resize: 'none' }} />
+                <select value={editTaskData.priority} onChange={e => dispatch(setEditTaskData({...editTaskData, priority: e.target.value}))} style={{ padding: '0.5rem', border: '1px solid #D1D5DB', borderRadius: '4px' }}>
                       <option>High</option><option>Medium</option><option>Low</option>
                     </select>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <button onClick={saveTaskEdit} style={{ padding: '0.25rem 0.5rem', background: '#3B82F6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>Save</button>
-                      <button onClick={() => setEditTaskId(null)} style={{ padding: '0.25rem 0.5rem', background: '#9CA3AF', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>Cancel</button>
+                  <button onClick={() => dispatch(setEditTaskId(null))} style={{ padding: '0.25rem 0.5rem', background: '#9CA3AF', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>Cancel</button>
                     </div>
                   </div>
                 ) : (
-                  <p style={{ margin: '0 0 0.5rem 0', fontWeight: 'bold', color: '#111827' }}>{task.task}</p>
+                  <>
+                    <p style={{ margin: '0 0 0.25rem 0', fontWeight: 'bold', color: '#111827' }}>{task.task}</p>
+                    {task.comment && <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.85rem', color: '#6B7280', fontStyle: 'italic' }}>💬 {task.comment}</p>}
+                  </>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#6B7280', marginBottom: '1rem' }}>
                   <span>{task.priority}</span><span>{task.date}</span>
@@ -248,19 +332,19 @@ export default function DashboardClientWrapper({ session }: { session: string })
                   {statusGroup !== 'Pending' && <button onClick={() => updateStatus(task.id, 'Pending')} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', cursor: 'pointer', borderRadius: '4px', border: '1px solid #D1D5DB', background: 'white' }}>← Pending</button>}
                   {statusGroup !== 'Working' && <button onClick={() => updateStatus(task.id, 'Working')} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', cursor: 'pointer', borderRadius: '4px', border: '1px solid #D1D5DB', background: '#DBEAFE', color: '#1D4ED8' }}>{statusGroup === 'Pending' ? 'Start Working →' : '← Working'}</button>}
                   {statusGroup !== 'Done' && <button onClick={() => updateStatus(task.id, 'Done')} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', cursor: 'pointer', borderRadius: '4px', border: '1px solid #D1D5DB', background: '#D1FAE5', color: '#047857' }}>Done ✓</button>}
-                  {task.owner === session && editTaskId !== task.id && <button onClick={() => { setEditTaskId(task.id); setEditTaskData({ task: task.task, priority: task.priority }); }} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', cursor: 'pointer', color: '#F59E0B', background: 'transparent', border: 'none' }}>✏️</button>}
+              {task.owner === session && editTaskId !== task.id && <button onClick={() => { dispatch(setEditTaskId(task.id)); dispatch(setEditTaskData({ task: task.task, priority: task.priority, comment: task.comment || '' })); }} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', cursor: 'pointer', color: '#F59E0B', background: 'transparent', border: 'none' }}>✏️</button>}
                   <button onClick={() => deleteTask(task.id)} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', cursor: 'pointer', color: '#EF4444', marginLeft: 'auto', background: 'transparent', border: 'none' }}>🗑️</button>
                 </div>
                 {task.owner === session && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-                    <input type="text" placeholder="Share with mobile #" value={shareInputs[task.id] || ''} onChange={e => setShareInputs({...shareInputs, [task.id]: e.target.value})} style={{ padding: '0.4rem', border: '1px solid #D1D5DB', borderRadius: '4px', flex: 1, fontSize: '0.8rem' }} />
+                <input type="text" placeholder="Share with mobile #" value={shareInputs[task.id] || ''} onChange={e => dispatch(setShareInput({ id: task.id, value: e.target.value }))} style={{ padding: '0.4rem', border: '1px solid #D1D5DB', borderRadius: '4px', flex: 1, fontSize: '0.8rem' }} />
                     <button onClick={() => shareTask(task.id)} style={{ padding: '0.4rem 0.75rem', background: '#10B981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>Share</button>
                   </div>
                 )}
                 {task.shared_with && (
                   <div style={{ fontSize: '0.75rem', color: '#6B7280', marginTop: '0.5rem' }}>
                     Shared: {task.shared_with.split(',').map((s: string) => revealedTasks[task.id] ? s.trim() : s.trim().substring(0, 2) + '******' + s.trim().slice(-2)).join(', ')}
-                    <button onClick={() => setRevealedTasks(prev => ({ ...prev, [task.id]: !prev[task.id] }))} style={{ background: 'none', border: 'none', color: '#3B82F6', cursor: 'pointer', marginLeft: '0.5rem' }}>{revealedTasks[task.id] ? 'Hide' : 'Reveal'}</button>
+                <button onClick={() => dispatch(toggleRevealedTask(task.id))} style={{ background: 'none', border: 'none', color: '#3B82F6', cursor: 'pointer', marginLeft: '0.5rem' }}>{revealedTasks[task.id] ? 'Hide' : 'Reveal'}</button>
                   </div>
                 )}
               </div>

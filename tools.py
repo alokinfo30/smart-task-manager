@@ -55,17 +55,32 @@ def read_todo_list() -> str:
         with SyncSessionLocal() as session:
             tasks = session.query(TaskDB).all()
             
-        visible_tasks = []
-        for t in tasks:
-            if t.owner == user or (not str(user).startswith('guest') and not str(user).startswith('demo_') and user in [s.strip() for s in str(t.shared_with or "").split(',')]):
-                visible_tasks.append(t)
-                
+            visible_tasks = []
+            now = datetime.datetime.now()
+            tasks_deleted = False
+            for t in tasks:
+                # Auto clear done tasks after 24 hours
+                if t.status == "Done" and t.completed_at:
+                    try:
+                        completed_time = datetime.datetime.strptime(t.completed_at, "%Y-%m-%d %H:%M:%S")
+                        if (now - completed_time).total_seconds() > 24 * 3600:
+                            session.delete(t)
+                            tasks_deleted = True
+                            continue
+                    except ValueError:
+                        pass
+                if t.owner == user or (not str(user).startswith('guest') and not str(user).startswith('demo_') and user in [s.strip() for s in str(t.shared_with or "").split(',')]):
+                    visible_tasks.append(t)
+            if tasks_deleted:
+                session.commit()
+                trigger_pusher_update()
+
         if not visible_tasks:
             return "The task list is currently empty or no tasks found for you."
 
-        output = "id,Date,Task,Status,Priority,CompletedAt,Owner,SharedWith\n"
+        output = "id,Date,Task,Status,Priority,CompletedAt,Owner,SharedWith,Comment\n"
         for t in visible_tasks:
-            output += f"{t.id},{t.date},{t.task},{t.status},{t.priority},{t.completed_at},{t.owner},{t.shared_with}\n"
+            output += f"{t.id},{t.date},{t.task},{t.status},{t.priority},{t.completed_at},{t.owner},{t.shared_with},{t.comment or ''}\n"
         return output
     except Exception as e:
         print(f"Error reading tasks: {e}")
@@ -97,7 +112,7 @@ def read_routines() -> str:
         print(f"Error reading routines: {e}")
         return "Error reading routines due to an internal issue."
 
-def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_accounts: str = "", owner: str = None) -> str:
+def add_task(task: str = "test task", priority: str = "High", date: str = None, shared_with_accounts: str = "", owner: str = None, comment: str = "") -> str:
     """
     Appends a new task to the todo list.
     
@@ -106,18 +121,22 @@ def add_task(task: str = "test task", priority: str = "High", date: str = None, 
         priority: The urgency level. Defaults to 'High'. Always use 'High' for new tasks.
         date: The scheduled date in YYYY-MM-DD format. Defaults to current date if not provided.
         shared_with_accounts: Comma-separated user accounts (mobile/email) to share this task with.
+        comment: An optional comment for the task.
     Returns a success message or error string.
     """
     if shared_with_accounts:
-        db = PasswordDB.load()
         accounts = [acc.strip() for acc in shared_with_accounts.split(",") if acc.strip()]
         valid_accounts = []
         current_user = owner if owner else get_current_user()
         for acc in accounts:
             if acc == current_user:
                 return f"Error: You cannot share a task with yourself ({acc})."
-            if "@" not in acc and acc not in db:
-                return f"Error: Account '{acc}' does not exist."
+            if "@" not in acc:
+                acc = "".join(filter(str.isdigit, acc))
+                if len(acc) != 10:
+                    return f"Error: Mobile number '{acc}' must be exactly 10 digits."
+                if not PasswordDB.get_user(acc):
+                    return f"Error: Account '{acc}' does not exist."
             valid_accounts.append(acc)
         shared_with_accounts = ",".join(valid_accounts)
 
@@ -132,7 +151,8 @@ def add_task(task: str = "test task", priority: str = "High", date: str = None, 
                 priority=priority,
                 completed_at="",
                 owner=owner if owner else get_current_user(),
-                shared_with=shared_with_accounts
+                shared_with=shared_with_accounts,
+                comment=comment
             )
             session.add(new_task)
             session.commit()
@@ -181,7 +201,7 @@ def update_task(task_identifier: str, updates: dict, owner: str = None) -> str:
     
     Args:
         task_identifier: A keyword to search for in the task descriptions.
-        updates: A dictionary of fields to update (e.g., {'Date': '2026-07-01', 'Priority': 'Medium'}).
+        updates: A dictionary of fields to update (e.g., {'Date': '2026-07-01', 'Priority': 'Medium', 'Comment': 'new comment'}).
         owner: Optional owner override.
     """
     try:
@@ -195,17 +215,22 @@ def update_task(task_identifier: str, updates: dict, owner: str = None) -> str:
                 return f"No tasks found matching '{task_identifier}' that you have permission to edit."
         
         if "SharedWith" in updates:
-            db = PasswordDB.load()
             accounts = [s.strip() for s in str(updates["SharedWith"]).split(',') if s.strip()]
+            valid_accounts = []
             current_user = owner if owner else get_current_user()
             for acc in accounts:
                 if acc == current_user:
                     return f"Error: You cannot share a task with yourself ({acc})."
-                if "@" not in acc and acc not in db:
-                    return f"Error: Account '{acc}' does not exist."
-            updates["SharedWith"] = ",".join(accounts)
+                if "@" not in acc:
+                    acc = "".join(filter(str.isdigit, acc))
+                    if len(acc) != 10:
+                        return f"Error: Mobile number '{acc}' must be exactly 10 digits."
+                    if not PasswordDB.get_user(acc):
+                        return f"Error: Account '{acc}' does not exist."
+                valid_accounts.append(acc)
+            updates["SharedWith"] = ",".join(valid_accounts)
 
-            allowed_mapping = {"Date": "date", "Task": "task", "Status": "status", "Priority": "priority", "SharedWith": "shared_with"}
+            allowed_mapping = {"Date": "date", "Task": "task", "Status": "status", "Priority": "priority", "SharedWith": "shared_with", "Comment": "comment"}
             for t in target_tasks:
                 for field, value in updates.items():
                     if field in allowed_mapping:

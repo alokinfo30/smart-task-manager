@@ -25,7 +25,7 @@ RAW_PINS_FILE = os.path.join(ROOT_DIR, "raw_pins.json")
 HASH_ALGORITHM = "sha256"
 ITERATIONS = 600000  # OWASP 2023 Recommended Minimum for PBKDF2
 
-JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_urlsafe(32))
+JWT_SECRET = os.getenv("JWT_SECRET", "default-insecure-secret-key-change-in-production")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
 
@@ -168,11 +168,13 @@ class PasswordHandler:
 
     @staticmethod
     def register(mobile: str, pin: str, security_question: str, security_answer: str):
+        pin = str(pin).strip()
         if not pin.isdigit() or len(pin) != 6:
             raise AuthenticationError("PIN must be exactly 6 digits.")
         
-        if not mobile or len(mobile) < 10:
-            raise AuthenticationError("Please enter a valid mobile number.")
+        mobile = "".join(filter(str.isdigit, mobile))
+        if len(mobile) != 10:
+            raise AuthenticationError("Mobile number must be exactly 10 digits.")
 
         user_data = PasswordDB.get_user(mobile)
         if user_data:

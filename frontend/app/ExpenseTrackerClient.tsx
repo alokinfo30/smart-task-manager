@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import api from '../api';
+import { fetchWithAuth } from './fetchWithAuth';
 
 interface Expense {
   id: number;
@@ -29,11 +29,16 @@ export default function ExpenseTrackerClient() {
   const [reCategory, setReCategory] = useState('Food');
   const [reDesc, setReDesc] = useState('');
   const [isListening, setIsListening] = useState(false);
+  const [currency, setCurrency] = useState('USD');
+  const [isScanning, setIsScanning] = useState(false);
+
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
   const fetchExpenses = async () => {
     try {
-      const res = await api.get('/api/expenses');
-      setExpenses(res.data.expenses || []);
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/expenses`);
+      const data = await res.json();
+      setExpenses(data.expenses || []);
     } catch (err) {
       console.error('Failed to fetch expenses', err);
     }
@@ -41,13 +46,16 @@ export default function ExpenseTrackerClient() {
 
   const fetchRecurring = async () => {
     try {
-      const res = await api.get('/api/expenses/recurring');
-      setRecurringSettings(res.data.settings || []);
-      setRecurringHistory(res.data.history || {});
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/expenses/recurring`);
+      const data = await res.json();
+      setRecurringSettings(data.settings || []);
+      setRecurringHistory(data.history || {});
     } catch(e) {}
   };
 
   useEffect(() => {
+    const savedCurrency = localStorage.getItem('userCurrency');
+    if (savedCurrency) setCurrency(savedCurrency);
     fetchExpenses();
     fetchRecurring();
 
@@ -63,11 +71,15 @@ export default function ExpenseTrackerClient() {
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post('/api/expenses', {
-        amount: parseFloat(amount as string),
-        category,
-        description,
-        date
+      await fetchWithAuth(`${API_BASE_URL}/api/expenses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: parseFloat(amount as string),
+          category,
+          description,
+          date
+        })
       });
       setAmount('');
       setDescription('');
@@ -79,17 +91,49 @@ export default function ExpenseTrackerClient() {
 
   const handleDelete = async (id: number) => {
     try {
-      await api.delete(`/api/expenses/${id}`);
+      await fetchWithAuth(`${API_BASE_URL}/api/expenses/${id}`, { method: 'DELETE' });
       fetchExpenses();
     } catch (err) {
       console.error('Failed to delete expense', err);
     }
   };
 
+  const handleScanReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsScanning(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const token = document.cookie.split('; ').find(row => row.startsWith('stm_token='))?.split('=')[1];
+      const res = await fetch(`${API_BASE_URL}/api/expenses/scan`, {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        body: formData
+      });
+      if (!res.ok) throw new Error("Scan failed");
+      
+      const data = await res.json();
+      if (data.amount) setAmount(data.amount.toString());
+      if (data.category) setCategory(data.category);
+      if (data.description) setDescription(data.description);
+      if (data.date) setDate(data.date);
+      
+      alert("Receipt scanned successfully! Please review the details before adding.");
+    } catch (err) { console.error(err); alert("Failed to scan receipt. Please enter manually."); }
+    finally { setIsScanning(false); }
+  };
+
   const saveExpenseEdit = async () => {
     if (editExpenseId === null) return;
     try {
-      await api.put('/api/expenses/edit', { expense_id: editExpenseId, ...editExpenseData });
+      await fetchWithAuth(`${API_BASE_URL}/api/expenses/edit`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expense_id: editExpenseId, ...editExpenseData })
+      });
       setEditExpenseId(null);
       fetchExpenses();
     } catch (e) { console.error(e); }
@@ -98,7 +142,11 @@ export default function ExpenseTrackerClient() {
   const addRecurringExpense = async () => {
     if (!reAmount || !reDesc.trim()) return;
     try {
-      await api.post('/api/expenses/recurring', { amount: parseFloat(reAmount), category: reCategory, description: reDesc });
+      await fetchWithAuth(`${API_BASE_URL}/api/expenses/recurring`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: parseFloat(reAmount), category: reCategory, description: reDesc })
+      });
       setReAmount(''); setReDesc('');
       fetchRecurring();
     } catch (e) { console.error(e); }
@@ -108,9 +156,17 @@ export default function ExpenseTrackerClient() {
     const todayStr = new Date().toISOString().split('T')[0];
     try {
       if (action === 'added') {
-        await api.post('/api/expenses', { amount: exp.amount, category: exp.category, description: exp.description, date: todayStr });
+        await fetchWithAuth(`${API_BASE_URL}/api/expenses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount: exp.amount, category: exp.category, description: exp.description, date: todayStr })
+        });
       }
-      await api.post('/api/expenses/recurring/check', { exp_id: exp.id, action, date: todayStr });
+      await fetchWithAuth(`${API_BASE_URL}/api/expenses/recurring/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exp_id: exp.id, action, date: todayStr })
+      });
       fetchRecurring();
       fetchExpenses();
     } catch (e) { console.error(e); }
@@ -118,7 +174,7 @@ export default function ExpenseTrackerClient() {
 
   const deleteRecurring = async (id: string) => {
     try {
-      await api.delete(`/api/expenses/recurring/${id}`);
+      await fetchWithAuth(`${API_BASE_URL}/api/expenses/recurring/${id}`, { method: 'DELETE' });
       fetchRecurring();
     } catch(e) {}
   };
@@ -185,11 +241,11 @@ export default function ExpenseTrackerClient() {
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
         <div style={{ flex: 1, padding: '1.5rem', background: '#FEF3C7', borderRadius: '8px', textAlign: 'center', border: '1px solid #FDE68A' }}>
           <h3 style={{ margin: '0 0 0.5rem 0', color: '#D97706' }}>Daily Total</h3>
-          <p style={{ margin: 0, fontSize: '2rem', fontWeight: 'bold', color: '#92400E' }}>${dailyTotal.toFixed(2)}</p>
+          <p style={{ margin: 0, fontSize: '2rem', fontWeight: 'bold', color: '#92400E' }}>{currency} {dailyTotal.toFixed(2)}</p>
         </div>
         <div style={{ flex: 1, padding: '1.5rem', background: '#DBEAFE', borderRadius: '8px', textAlign: 'center', border: '1px solid #BFDBFE' }}>
           <h3 style={{ margin: '0 0 0.5rem 0', color: '#1D4ED8' }}>Monthly Total</h3>
-          <p style={{ margin: 0, fontSize: '2rem', fontWeight: 'bold', color: '#1E3A8A' }}>${monthlyTotal.toFixed(2)}</p>
+          <p style={{ margin: 0, fontSize: '2rem', fontWeight: 'bold', color: '#1E3A8A' }}>{currency} {monthlyTotal.toFixed(2)}</p>
         </div>
       </div>
 
@@ -199,8 +255,8 @@ export default function ExpenseTrackerClient() {
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
             <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6B7280' }} />
-            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6B7280' }} tickFormatter={(val) => `$${val}`} width={50} />
-            <Tooltip formatter={(value: number) => [`$${value.toFixed(2)}`, 'Spent']} labelStyle={{ color: 'black' }} />
+            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6B7280' }} tickFormatter={(val) => `${currency} ${val}`} width={60} />
+            <Tooltip formatter={(value: number) => [`${currency} ${value.toFixed(2)}`, 'Spent']} labelStyle={{ color: 'black' }} />
             <Line type="monotone" dataKey="amount" stroke="#EF4444" strokeWidth={3} dot={{ r: 3, fill: '#EF4444' }} activeDot={{ r: 6 }} />
           </LineChart>
         </ResponsiveContainer>
@@ -233,7 +289,7 @@ export default function ExpenseTrackerClient() {
 
         {recurringSettings.filter((r: any) => !(recurringHistory[new Date().toISOString().split('T')[0]]?.[r.id])).map((r: any) => (
           <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', backgroundColor: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '8px', marginBottom: '0.5rem' }}>
-            <span><strong>{r.description}</strong> - ${r.amount} ({r.category})</span>
+            <span><strong>{r.description}</strong> - {currency} {r.amount} ({r.category})</span>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button onClick={() => handleRecurringCheck(r, 'added')} style={{ padding: '0.4rem 0.8rem', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>Add Today</button>
               <button onClick={() => handleRecurringCheck(r, 'skipped')} style={{ padding: '0.4rem 0.8rem', backgroundColor: '#9CA3AF', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>Skip</button>
@@ -243,7 +299,7 @@ export default function ExpenseTrackerClient() {
       </div>
 
       <form onSubmit={handleAddExpense} style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap' }}>
-        <input type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount ($)" style={{ flex: 1, padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px', minWidth: '100px' }} required />
+        <input type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder={`Amount (${currency})`} style={{ flex: 1, padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px', minWidth: '100px' }} required />
         <select value={category} onChange={e => setCategory(e.target.value)} style={{ padding: '0.75rem', border: '1px solid #D1D5DB', borderRadius: '4px' }}>
           <option value="Food">Food</option>
           <option value="Transport">Transport</option>
@@ -251,6 +307,10 @@ export default function ExpenseTrackerClient() {
           <option value="Bills">Bills</option>
           <option value="Other">Other</option>
         </select>
+        <label style={{ padding: '0.75rem 1rem', background: isScanning ? '#9CA3AF' : '#8B5CF6', color: 'white', border: 'none', borderRadius: '4px', cursor: isScanning ? 'not-allowed' : 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
+          {isScanning ? '⏳ Scanning...' : '📷 Scan Receipt'}
+          <input type="file" accept="image/*" onChange={handleScanReceipt} style={{ display: 'none' }} disabled={isScanning} />
+        </label>
         <button type="button" onClick={toggleDictation} style={{ padding: '0.75rem', background: isListening ? '#EF4444' : '#E5E7EB', color: isListening ? 'white' : '#374151', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Voice Dictation">
           {isListening ? '🛑' : '🎤'}
         </button>
@@ -293,7 +353,7 @@ export default function ExpenseTrackerClient() {
                 <td style={{ padding: '0.75rem' }}>
                   <span style={{ background: '#F3F4F6', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.85rem' }}>{exp.category}</span>
                 </td>
-                <td style={{ padding: '0.75rem', fontWeight: 'bold', color: '#EF4444' }}>${Number(exp.amount).toFixed(2)}</td>
+                <td style={{ padding: '0.75rem', fontWeight: 'bold', color: '#EF4444' }}>{currency} {Number(exp.amount).toFixed(2)}</td>
                 <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                   <button onClick={() => { setEditExpenseId(exp.id); setEditExpenseData({ amount: Number(exp.amount), category: exp.category, description: exp.description, date: exp.date }); }} style={{ background: 'none', border: 'none', color: '#F59E0B', cursor: 'pointer', fontSize: '1.2rem', marginRight: '0.5rem' }}>✏️</button>
                   <button onClick={() => handleDelete(exp.id)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: '1.2rem' }}>×</button>

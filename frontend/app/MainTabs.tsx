@@ -7,12 +7,12 @@ import LearningHub from './LearningHub';
 import ExpenseTrackerClient from './ExpenseTrackerClient';
 import RoutinesClient from './RoutinesClient';
 import ResumeBuilderClient from './ResumeBuilderClient';
-import ProfileClient from './ProfileClient';
+import AmbientCompanion from './AmbientCompanion';
 
 export default function MainTabs({ session }: { session: string }) {
   const [activeTab, setActiveTab] = useState('Workspace');
 
-  const tabs = ['Workspace', 'Learning Hub', 'Expense Tracker', 'Resume Builder', 'Routines', 'Profile'];
+  const tabs = ['Workspace', 'Learning Hub', 'Expense Tracker', 'Resume Builder', 'Routines', 'Health Monitor 🩺'];
 
   return (
     <div>
@@ -62,8 +62,11 @@ export default function MainTabs({ session }: { session: string }) {
         {activeTab === 'Routines' && <RoutinesClient />}
 
         {activeTab === 'Resume Builder' && <ResumeBuilderClient />}
+      </div>
 
-        {activeTab === 'Profile' && <ProfileClient />}
+      {/* Keep Health Monitor constantly mounted outside the re-rendered key div */}
+      <div style={{ display: activeTab === 'Health Monitor 🩺' ? 'block' : 'none', animation: activeTab === 'Health Monitor 🩺' ? 'fadeSlideIn 0.3s ease-out' : 'none' }}>
+        <AmbientCompanion />
       </div>
     </div>
   );

@@ -34,12 +34,15 @@ from auth import PasswordHandler, AuthenticationError, PasswordDB, SessionManage
 IS_PROD = os.getenv("ENVIRONMENT", "development").lower() == "production"
 
 def get_current_user(request: Request):
-    token = request.cookies.get("stm_token")
-    
-    # Support Next.js frontend which sends Bearer tokens in Authorization header
+    # Prioritize Next.js Authorization header over potentially stale browser cookies
     auth_header = request.headers.get("Authorization")
-    if not token and auth_header and auth_header.startswith("Bearer "):
+    token = None
+    
+    if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
+        
+    if not token:
+        token = request.cookies.get("stm_token")
         
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -132,11 +135,11 @@ async def rate_limit_middleware(request: Request, call_next):
 
 # --- Auth Models & Endpoints ---
 class LoginRequest(BaseModel):
-    mobile: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-\.\@]+$")
+    mobile: str = Field(..., max_length=50)
     pin: str = Field(..., max_length=50) # Remove pattern to allow dummy/empty strings
 
 class RegisterRequest(BaseModel):
-    mobile: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-\.\@]+$")
+    mobile: str = Field(..., max_length=50)
     pin: str = Field(..., max_length=6, pattern=r"^[0-9]+$")
     security_question: str = Field(..., max_length=300)
     security_answer: str = Field(..., max_length=300)
@@ -155,33 +158,43 @@ def refresh_token(req: RefreshRequest):
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest, response: Response):
-    if req.mobile == "demo_user" or req.mobile.startswith("demo_") or req.mobile.startswith("guest"):
-        token = TokenManager.create_access_token({"sub": req.mobile})
+    mobile = req.mobile.strip()
+    if mobile == "demo_user" or mobile.startswith("demo_") or mobile.startswith("guest"):
+        token = TokenManager.create_access_token({"sub": mobile})
         response.set_cookie(key="stm_token", value=token, httponly=True, secure=IS_PROD, samesite="none" if IS_PROD else "lax", max_age=604800)
-        return {"user_id": req.mobile, "name": "Demo User", "email": "", "avatar": "", "access_token": token, "refresh_token": token}
+        return {"user_id": mobile, "name": "Demo User", "email": "", "avatar": "", "access_token": token, "refresh_token": token}
+        
+    mobile = "".join(filter(str.isdigit, mobile))
+    if len(mobile) != 10:
+        raise HTTPException(status_code=400, detail="Mobile number must be exactly 10 digits.")
+
     try:
-        if PasswordHandler.login(req.mobile, req.pin):
-            user_data = PasswordDB.get_user(req.mobile)
-            token = TokenManager.create_access_token({"sub": req.mobile})
+        if PasswordHandler.login(mobile, req.pin):
+            user_data = PasswordDB.get_user(mobile)
+            token = TokenManager.create_access_token({"sub": mobile})
             response.set_cookie(key="stm_token", value=token, httponly=True, secure=IS_PROD, samesite="none" if IS_PROD else "lax", max_age=604800)
-            return {"user_id": req.mobile, "name": user_data.get("name", ""), "email": user_data.get("email", ""), "avatar": user_data.get("avatar", ""), "access_token": token, "refresh_token": token}
+            return {"user_id": mobile, "name": user_data.get("name", ""), "email": user_data.get("email", ""), "avatar": user_data.get("avatar", ""), "access_token": token, "refresh_token": token}
     except AuthenticationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     raise HTTPException(status_code=400, detail="Invalid credentials")
 
 @app.post("/api/auth/register")
 def register(req: RegisterRequest, response: Response):
+    mobile = "".join(filter(str.isdigit, req.mobile))
+    if len(mobile) != 10:
+        raise HTTPException(status_code=400, detail="Mobile number must be exactly 10 digits.")
     try:
-        PasswordHandler.register(req.mobile, req.pin, req.security_question, req.security_answer)
-        token = TokenManager.create_access_token({"sub": req.mobile})
+        PasswordHandler.register(mobile, req.pin, req.security_question, req.security_answer)
+        token = TokenManager.create_access_token({"sub": mobile})
         response.set_cookie(key="stm_token", value=token, httponly=True, secure=IS_PROD, samesite="none" if IS_PROD else "lax", max_age=604800)
-        return {"user_id": req.mobile, "access_token": token, "refresh_token": token}
+        return {"user_id": mobile, "access_token": token, "refresh_token": token}
     except AuthenticationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/auth/question")
 def get_security_question(mobile: str):
-    if mobile.strip() == "demo_user" or mobile.startswith("demo_"):
+    mobile = mobile.strip()
+    if mobile == "demo_user" or mobile.startswith("demo_"):
         raise HTTPException(status_code=400, detail="Demo user does not have a security question.")
     try:
         q = PasswordHandler.get_user_security_question(mobile)
@@ -190,13 +203,17 @@ def get_security_question(mobile: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 class RecoverRequest(BaseModel):
-    mobile: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-\.\@]+$")
+    mobile: str = Field(..., max_length=50)
     answer: str = Field(..., max_length=300)
 
 @app.post("/api/auth/recover")
 def recover_pin(req: RecoverRequest):
+    mobile = "".join(filter(str.isdigit, req.mobile))
+    if len(mobile) != 10:
+        raise HTTPException(status_code=400, detail="Mobile number must be exactly 10 digits.")
+
     try:
-        new_pin = PasswordHandler.verify_answer_and_reset_pin(req.mobile, req.answer)
+        new_pin = PasswordHandler.verify_answer_and_reset_pin(mobile, req.answer)
         return {"new_pin": new_pin}
     except AuthenticationError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -291,32 +308,36 @@ def google_callback(req: GoogleCallbackRequest, response: Response):
 
 class CompleteSSORegistration(BaseModel):
     email: str = Field(..., max_length=100)
-    mobile: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-\.\@]+$")
+    mobile: str = Field(..., max_length=50)
     pin: str = Field(..., max_length=6, pattern=r"^[0-9]+$")
     security_question: str = Field(..., max_length=300)
     security_answer: str = Field(..., max_length=300)
 
 @app.post("/api/auth/google/complete")
 def complete_sso(req: CompleteSSORegistration, response: Response):
+    mobile = "".join(filter(str.isdigit, req.mobile))
+    if len(mobile) != 10:
+        raise HTTPException(status_code=400, detail="Mobile number must be exactly 10 digits.")
+
     try:
         try:
-            PasswordHandler.register(req.mobile, req.pin, req.security_question, req.security_answer)
+            PasswordHandler.register(mobile, req.pin, req.security_question, req.security_answer)
         except AuthenticationError as e:
             if "already exists" not in str(e).lower():
                 raise e
-            if not PasswordHandler.login(req.mobile, req.pin):
+            if not PasswordHandler.login(mobile, req.pin):
                 raise AuthenticationError("Mobile already exists. Incorrect PIN to link account.")
 
         # Preserve existing profile data if linking to an existing account
-        existing_user = PasswordDB.get_user(req.mobile)
+        existing_user = PasswordDB.get_user(mobile)
         existing_name = existing_user.get("name", "")
         existing_avatar = existing_user.get("avatar", "")
-        PasswordHandler.update_profile(req.mobile, existing_name, req.email, "", existing_avatar)
+        PasswordHandler.update_profile(mobile, existing_name, req.email, "", existing_avatar)
         
-        token = TokenManager.create_access_token({"sub": req.mobile})
+        token = TokenManager.create_access_token({"sub": mobile})
         response.set_cookie(key="stm_token", value=token, httponly=True, secure=IS_PROD, samesite="none" if IS_PROD else "lax", max_age=604800)
 
-        return {"user_id": req.mobile, "access_token": token, "refresh_token": token}
+        return {"user_id": mobile, "access_token": token, "refresh_token": token}
     except AuthenticationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -352,6 +373,7 @@ def delete_account(current_user: str = Depends(get_current_user), response: Resp
 class UpdateTaskStatus(BaseModel):
     task_id: int
     status: str = Field(..., max_length=20)
+    comment: str = Field("", max_length=1000)
     user_id: str = ""
 
 @app.get("/api/tasks")
@@ -361,13 +383,29 @@ async def get_tasks(user_id: str = Depends(get_current_user)):
             result = await session.execute(select(TaskDB))
             tasks = result.scalars().all()
             records = []
+            now = datetime.now()
+            tasks_deleted = False
             for t in tasks:
+                # Auto clear done tasks after 24 hours
+                if t.status == "Done" and t.completed_at:
+                    try:
+                        completed_time = datetime.strptime(t.completed_at, "%Y-%m-%d %H:%M:%S")
+                        if (now - completed_time).total_seconds() > 24 * 3600:
+                            await session.delete(t)
+                            tasks_deleted = True
+                            continue
+                    except ValueError:
+                        pass
                 if t.owner == user_id or (user_id != 'guest' and user_id in [s.strip() for s in str(t.shared_with or "").split(',')]):
                     records.append({
                         "id": t.id, "date": t.date or "", "task": t.task or "",
                         "status": t.status or "Pending", "priority": t.priority or "High",
-                        "completed_at": t.completed_at or "", "owner": t.owner or "", "shared_with": t.shared_with or ""
+                        "completed_at": t.completed_at or "", "owner": t.owner or "", "shared_with": t.shared_with or "",
+                        "comment": t.comment or ""
                     })
+            if tasks_deleted:
+                await session.commit()
+                trigger_pusher_update()
             return {"tasks": records}
     except Exception as e:
         return {"tasks": []}
@@ -378,13 +416,14 @@ class AddTaskRequest(BaseModel):
     user_id: str = ""
     date: Optional[str] = Field(None, max_length=20)
     shared_with: Optional[str] = Field("", max_length=200)
+    comment: Optional[str] = Field("", max_length=1000)
 
 @app.post("/api/tasks")
 async def add_manual_task(req: AddTaskRequest, current_user: str = Depends(get_current_user)):
     req.user_id = current_user
     try:
         import tools
-        await asyncio.to_thread(tools.add_task, req.task, req.priority, req.date, req.shared_with, req.user_id)
+        await asyncio.to_thread(tools.add_task, req.task, req.priority, req.date, req.shared_with, req.user_id, req.comment)
         return {"message": "Success"}
     except Exception as e:
         logger.error(f"Task creation failed: {e}", exc_info=True)
@@ -399,6 +438,11 @@ class ShareTaskRequest(BaseModel):
 async def share_task(req: ShareTaskRequest, current_user: str = Depends(get_current_user)):
     req.user_id = current_user
     try:
+        if "@" not in req.shared_with:
+            req.shared_with = "".join(filter(str.isdigit, req.shared_with))
+            if len(req.shared_with) != 10:
+                raise HTTPException(status_code=400, detail="Mobile number must be exactly 10 digits.")
+
         user = await asyncio.to_thread(PasswordDB.get_user, req.shared_with)
         if not user:
             raise HTTPException(status_code=400, detail=f"Account '{req.shared_with}' does not exist.")
@@ -427,6 +471,7 @@ class EditTaskRequest(BaseModel):
     user_id: str = ""
     task: str = Field(..., max_length=500)
     priority: str = Field(..., max_length=20)
+    comment: str = Field("", max_length=1000)
 
 @app.put("/api/tasks/edit")
 async def edit_task(req: EditTaskRequest, current_user: str = Depends(get_current_user)):
@@ -439,6 +484,7 @@ async def edit_task(req: EditTaskRequest, current_user: str = Depends(get_curren
             if t.owner != req.user_id: return {"message": "Permission Denied"}
             t.task = req.task
             t.priority = req.priority
+            t.comment = req.comment
             await session.commit()
             trigger_pusher_update()
             return {"message": "Success"}
@@ -455,6 +501,8 @@ async def update_task(req: UpdateTaskStatus, current_user: str = Depends(get_cur
             t = result.scalars().first()
             if not t: return {"message": "Task not found"}
             t.status = req.status
+            if req.comment:
+                t.comment = req.comment
             t.completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if req.status == 'Done' else ""
             await session.commit()
             trigger_pusher_update()
@@ -529,6 +577,43 @@ def add_expense(req: AddExpenseRequest, current_user: str = Depends(get_current_
     except Exception as e:
         logger.error(f"Add expense failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/expenses/scan")
+async def scan_receipt(file: UploadFile = File(...), current_user: str = Depends(get_current_user)):
+    file_bytes = await file.read()
+    mime_type = file.content_type
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Max 5MB.")
+        
+    def _scan():
+        import agent
+        from google import genai
+        prompt = """
+        Analyze this receipt and extract the following information in strict JSON format:
+        {
+            "amount": 0.00,
+            "category": "Food", // Choose best fit: Food, Transport, Shopping, Bills, Other
+            "description": "Detailed description including specific item names to ensure best customer experience suggestions",
+            "date": "YYYY-MM-DD"
+        }
+        If you cannot find a date, use the current date. Ensure the response is ONLY valid JSON.
+        """
+        try:
+            image_part = genai.types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+            response = agent.client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=[prompt, image_part],
+            )
+            text = agent.extract_response_text(response)
+            text = text.replace("```json", "").replace("```", "").strip()
+            return json.loads(text)
+        except Exception as e:
+            logger.error(f"Receipt scan failed: {e}")
+            return {"error": "Failed to parse receipt."}
+    
+    result = await asyncio.to_thread(_scan)
+    if "error" in result: raise HTTPException(status_code=500, detail=result["error"])
+    return result
 
 class EditExpenseRequest(BaseModel):
     expense_id: int
@@ -801,6 +886,30 @@ async def update_archive(req: AddArchiveRequest, current_user: str = Depends(get
         return {"message": "Archive updated successfully"}
     return await asyncio.to_thread(_up)
 
+# --- Resume Profile Archival ---
+class ResumeProfileRequest(BaseModel):
+    content: str = Field(..., max_length=50000)
+
+def get_safe_resume_path(user_id: str) -> str:
+    safe_id = "".join(c for c in str(user_id) if c.isalnum() or c in ("_", "-", "@", "."))
+    return os.path.join(ROOT_DIR, f"resume_profile_{safe_id}.txt")
+
+@app.get("/api/resume/profile")
+async def get_resume_profile(user_id: str = Depends(get_current_user)):
+    def _get():
+        file_path = get_safe_resume_path(user_id)
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as f: return {"content": f.read()}
+        return {"content": ""}
+    return await asyncio.to_thread(_get)
+
+@app.post("/api/resume/profile")
+async def save_resume_profile(req: ResumeProfileRequest, current_user: str = Depends(get_current_user)):
+    def _save():
+        with open(get_safe_resume_path(current_user), "w", encoding="utf-8") as f: f.write(req.content)
+        return {"message": "Resume profile archived for future use"}
+    return await asyncio.to_thread(_save)
+
 # --- AI/Assistant Endpoints ---
 class ChatRequest(BaseModel):
     prompt: str = Field(..., max_length=3000)
@@ -815,15 +924,42 @@ async def chat(req: ChatRequest, current_user: str = Depends(get_current_user)):
         # CRITICAL: Set the user context in this new thread so the AI 
         # modifies your database rows instead of the "guest" fallback.
         import tools
+        import agent
         tools.context.user = req.user_id
-        return run_autonomous_agent(
+        
+        state = agent.load_chat_state(req.user_id)
+        chat_display = state.get("chat_display", [])
+        chat_display.append({
+            "role": "user",
+            "content": req.prompt,
+            "timestamp": datetime.now().isoformat(),
+            "archived": False
+        })
+        
+        response_text, updated_history = run_autonomous_agent(
             prompt=req.prompt,
             history=req.history,
             user_id=req.user_id,
             language=req.language
         )
+        
+        chat_display.append({
+            "role": "assistant",
+            "content": response_text,
+            "timestamp": datetime.now().isoformat(),
+            "archived": False
+        })
+        agent.save_chat_state(updated_history, chat_display, req.user_id)
+        return response_text, updated_history
     response_text, updated_history = await asyncio.to_thread(_chat)
     return {"response": response_text}
+
+@app.get("/api/chat/history")
+async def get_chat_history(current_user: str = Depends(get_current_user)):
+    def _get():
+        import agent
+        return agent.load_chat_state(current_user)
+    return await asyncio.to_thread(_get)
 
 class LearnRequest(BaseModel):
     topic: str = Field(..., max_length=1000)

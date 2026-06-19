@@ -281,6 +281,16 @@ def get_default_language():
         pass
     return "English"
 
+def get_default_currency_symbol():
+    """Guess default currency based on user IP geolocation."""
+    try:
+        response = requests.get('https://ipapi.co/json/', timeout=3)
+        if response.status_code == 200:
+            return response.json().get("currency", "USD")
+    except Exception:
+        pass
+    return "USD"
+
 def init_session_state():
     """Initialize session state for authentication."""
     if "checkbox_suffix" not in st.session_state:
@@ -290,6 +300,8 @@ def init_session_state():
     if "auth_method" not in st.session_state:
         st.session_state.auth_method = None
     if "current_user" not in st.session_state:
+        if "currency_symbol" not in st.session_state:
+            st.session_state.currency_symbol = get_default_currency_symbol()
         # 1. Check for Google authorization code callback
         if "code" in st.query_params:
             code = st.query_params.get("code")
@@ -370,20 +382,35 @@ def init_session_state():
 
 def load_todo_df(current_user):
     """Loads the todo list into a DataFrame, handles 24h deletion, and sorts."""
-    required_cols = ["id", "Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]
+    required_cols = ["id", "Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith", "Comment"]
 
     try:
         with SyncSessionLocal() as session:
             tasks = session.query(TaskDB).all()
-        data = []
-        for t in tasks:
-            if t.owner == current_user or (not current_user.startswith('guest') and not current_user.startswith('demo_') and current_user in [s.strip() for s in str(t.shared_with or "").split(',')]):
-                data.append({
-                    "id": t.id, "Date": t.date, "Task": t.task, "Status": t.status,
-                    "Priority": t.priority, "CompletedAt": t.completed_at,
-                    "Owner": t.owner, "SharedWith": t.shared_with
-                })
-        df = pd.DataFrame(data, columns=required_cols)
+            data = []
+            now = datetime.now()
+            tasks_deleted = False
+            for t in tasks:
+                # Auto clear done tasks after 24 hours
+                if t.status == "Done" and t.completed_at:
+                    try:
+                        completed_time = datetime.strptime(t.completed_at, "%Y-%m-%d %H:%M:%S")
+                        if (now - completed_time).total_seconds() > 24 * 3600:
+                            session.delete(t)
+                            tasks_deleted = True
+                            continue
+                    except ValueError:
+                        pass
+                if t.owner == current_user or (not current_user.startswith('guest') and not current_user.startswith('demo_') and current_user in [s.strip() for s in str(t.shared_with or "").split(',')]):
+                    data.append({
+                        "id": t.id, "Date": t.date, "Task": t.task, "Status": t.status,
+                        "Priority": t.priority, "CompletedAt": t.completed_at,
+                        "Owner": t.owner, "SharedWith": t.shared_with, "Comment": t.comment or ""
+                    })
+            if tasks_deleted:
+                session.commit()
+                broadcast_update()
+            df = pd.DataFrame(data, columns=required_cols)
     except Exception:
         df = pd.DataFrame(columns=required_cols)
 
@@ -501,12 +528,14 @@ def render_auth_ui():
         st.sidebar.divider()
 
         st.sidebar.subheader(get_text("📱 Mobile Number & PIN", lang))
-        mobile_input = st.sidebar.text_input(get_text("Mobile Number", lang), placeholder="e.g. 9876543210", key="auth_mobile", max_chars=50)
+        raw_mobile = st.sidebar.text_input(get_text("Mobile Number", lang), placeholder="e.g. 9876543210", key="auth_mobile", max_chars=50)
+        mobile_input = "".join(filter(str.isdigit, raw_mobile)) if raw_mobile else ""
+        
         pin_input = st.sidebar.text_input(get_text("6-Digit PIN", lang), type="password", help="Enter your 6-digit PIN", key="auth_pin", max_chars=6)
         remember_me = st.sidebar.checkbox(get_text("Remember Me", lang), value=True, help="Keep me logged in even after page refresh")
 
-        if not mobile_input or len(mobile_input) < 10:
-            st.sidebar.warning(get_text("⚠️ Enter a valid mobile number", lang))
+        if not mobile_input or len(mobile_input) != 10:
+            st.sidebar.warning(get_text("⚠️ Enter exactly a 10-digit mobile number", lang))
             return "guest"
 
         col_reg, col_log = st.sidebar.columns(2)
@@ -1350,13 +1379,13 @@ def render_dashboard(current_user):
     lang = st.session_state.language
 
     SCHOOL_QUOTES = [
-        "“The roots of education are bitter, but the fruit is sweet.” – Aristotle",
-        "“Success is the sum of small efforts, repeated day in and day out.” – Robert Collier",
-        "“You don’t have to be great to start, but you have to start to be great.” – Zig Ziglar",
-        "“Discipline is the bridge between goals and accomplishment.” – Jim Rohn",
-        "“The secret of your future is hidden in your daily routine.” – Mike Murdock",
-        "“Do not wait; the time will never be 'just right.' Start where you stand.” – George Herbert",
-        "“We are what we repeatedly do. Excellence, then, is not an act, but a habit.” – Will Durant"
+        get_text("“The roots of education are bitter, but the fruit is sweet.” – Aristotle", lang),
+        get_text("“Success is the sum of small efforts, repeated day in and day out.” – Robert Collier", lang),
+        get_text("“You don’t have to be great to start, but you have to start to be great.” – Zig Ziglar", lang),
+        get_text("“Discipline is the bridge between goals and accomplishment.” – Jim Rohn", lang),
+        get_text("“The secret of your future is hidden in your daily routine.” – Mike Murdock", lang),
+        get_text("“Do not wait; the time will never be 'just right.' Start where you stand.” – George Herbert", lang),
+        get_text("“We are what we repeatedly do. Excellence, then, is not an act, but a habit.” – Will Durant", lang)
     ]
     # Pick a rotating quote based on the day of the year
     daily_quote = SCHOOL_QUOTES[datetime.now().timetuple().tm_yday % len(SCHOOL_QUOTES)]
@@ -1503,6 +1532,7 @@ def render_dashboard(current_user):
         df_editor["CompletedAt"] = pd.to_datetime(df_editor["CompletedAt"], errors='coerce')
         df_editor["Owner"] = df_editor["Owner"].fillna("").astype(str)
         df_editor["SharedWith"] = df_editor["SharedWith"].fillna("").astype(str)
+        df_editor["Comment"] = df_editor["Comment"].fillna("").astype(str)
 
         edited_df = st.data_editor(
             df_editor,
@@ -1525,6 +1555,7 @@ def render_dashboard(current_user):
                 "Task": st.column_config.TextColumn(get_text("Task", lang), width="medium"),
                 "CompletedAt": st.column_config.DatetimeColumn(get_text("Completed At", lang), disabled=True, width="small"),
                 "Owner": st.column_config.TextColumn(get_text("Owner", lang), disabled=True),
+                "Comment": st.column_config.TextColumn(get_text("Comment", lang), help="Add details or reasons for status", default=""),
                 "SharedWith": st.column_config.TextColumn("Shared With (Accounts)", help="Comma-separated accounts", default=""),
             },
             num_rows="fixed", # Changed to fixed to prevent accidental row generation
@@ -1537,7 +1568,6 @@ def render_dashboard(current_user):
         if btn_col1.button(get_text("💾 Save Changes", st.session_state.language), width="stretch"):
             # Validate shared accounts before saving
             validation_error = None
-            db = PasswordDB.load()
             for idx, row in edited_df[edited_df["🗑️"] == False].iterrows():
                 current_val = str(row['SharedWith'])
                 if "*" not in current_val and current_val.strip() and current_val.lower() != "nan":
@@ -1546,9 +1576,14 @@ def render_dashboard(current_user):
                         if acc == current_user:
                             validation_error = f"Error: You cannot share a task with yourself ({acc})."
                             break
-                        if "@" not in acc and acc not in db:
-                            validation_error = f"Error: Account '{acc}' does not exist."
-                            break
+                        if "@" not in acc:
+                            acc_cleaned = "".join(filter(str.isdigit, acc))
+                            if len(acc_cleaned) != 10:
+                                validation_error = f"Error: Mobile number '{acc}' must be exactly 10 digits."
+                                break
+                            if not PasswordDB.get_user(acc_cleaned):
+                                validation_error = f"Error: Account '{acc}' does not exist."
+                                break
                 if validation_error:
                     break
             
@@ -1593,7 +1628,7 @@ def render_dashboard(current_user):
                     if os.path.exists(tools.TODO_FILE):
                         full_df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
                         # Ensure required columns exist to avoid KeyError during filtering or processing
-                        for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
+                        for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith", "Comment"]:
                             if col not in full_df.columns:
                                 if col == "Priority": full_df[col] = "High"
                                 elif col == "Owner": full_df[col] = "guest"
@@ -1625,7 +1660,7 @@ def render_dashboard(current_user):
                 if os.path.exists(tools.TODO_FILE):
                     full_df = pd.read_csv(tools.TODO_FILE, dtype={'Owner': str, 'SharedWith': str})
                     # Ensure required columns exist to avoid KeyError: 'Owner'
-                    for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith"]:
+                    for col in ["Date", "Task", "Status", "Priority", "CompletedAt", "Owner", "SharedWith", "Comment"]:
                         if col not in full_df.columns:
                             if col == "Priority": full_df[col] = "High"
                             elif col == "Owner": full_df[col] = "guest"
@@ -1776,6 +1811,13 @@ def render_dashboard(current_user):
                 clear_chat_state(current_user)
                 st.rerun()
 
+    with tab_routines:
+        render_routines(current_user)
+        
+    with tab_learning:
+        st.header(get_text("📚 AI Learning & Practice", lang))
+        st.markdown(get_text("Enter a topic to learn, or paste a job description to get a tailored learning plan.", lang))
+
         # Persistent Log Viewer
         st.divider()
         with st.expander(get_text("📖 View Persistent Archives", lang), expanded=False):
@@ -1803,12 +1845,7 @@ def render_dashboard(current_user):
             else:
                 st.info(get_text("No persistent archives found yet.", lang))
 
-    with tab_routines:
-        render_routines(current_user)
-        
-    with tab_learning:
-        st.header(get_text("📚 AI Learning & Practice", lang))
-        st.markdown(get_text("Enter a topic to learn, or paste a job description to get a tailored learning plan.", lang))
+        st.divider()
 
         topic = st.text_area(get_text("Enter Topic or Job Description:", lang), height=150, max_chars=10000, placeholder=get_text("e.g., Python Decorators, or paste a full job description here...", lang))
         if st.button(get_text("🚀 Generate Lesson", lang)):
@@ -1957,6 +1994,8 @@ def render_dashboard(current_user):
                     
     with tab_expenses:
         st.header(get_text("💰 Expense Tracker", lang))
+        currency_symbol = st.session_state.get("currency_symbol", "USD")
+
         with st.expander(get_text("⚙️ Manage Recurring Expenses", lang), expanded=False):
             with st.form("add_recurring_expense_form"):
                 col_re1, col_re2 = st.columns(2)
@@ -1991,7 +2030,7 @@ def render_dashboard(current_user):
                 st.markdown(get_text("**Your Recurring Expenses:**", lang))
                 for i, re_item in enumerate(user_re_data["settings"]):
                     col_del1, col_del2 = st.columns([0.9, 0.1])
-                    col_del1.write(f"- **{re_item['description']}**: ${re_item['amount']:.2f} ({re_item['category']})")
+                    col_del1.write(f"- **{re_item['description']}**: {currency_symbol} {re_item['amount']:.2f} ({re_item['category']})")
                     if col_del2.button("🗑️", key=f"del_re_{re_item['id']}", help="Delete Recurring Expense"):
                         user_re_data["settings"].pop(i)
                         re_data[current_user] = user_re_data
@@ -2014,7 +2053,7 @@ def render_dashboard(current_user):
                 for re_item in pending_re:
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([2, 1, 1])
-                        c1.markdown(f"**{re_item['description']}** - ${re_item['amount']:.2f} ({re_item['category']})")
+                        c1.markdown(f"**{re_item['description']}** - {currency_symbol} {re_item['amount']:.2f} ({re_item['category']})")
                         if c2.button(get_text("✅ Add", lang), key=f"re_add_{re_item['id']}", width="stretch"):
                             tools.add_expense(re_item['amount'], re_item['category'], re_item['description'], today_str, current_user)
                             today_history[re_item['id']] = "added"
@@ -2058,8 +2097,8 @@ def render_dashboard(current_user):
             
             st.divider()
             m1, m2 = st.columns(2)
-            m1.metric(get_text("Daily Total", lang), f"${daily_total:.2f}")
-            m2.metric(get_text("Monthly Total", lang), f"${monthly_total:.2f}")
+            m1.metric(get_text("Daily Total", lang), f"{currency_symbol} {daily_total:.2f}")
+            m2.metric(get_text("Monthly Total", lang), f"{currency_symbol} {monthly_total:.2f}")
             
             st.subheader(get_text("📊 Expense Summary", lang))
             exp_editor = exp_df.copy()

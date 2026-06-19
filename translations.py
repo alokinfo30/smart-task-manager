@@ -154,7 +154,8 @@ TRANSLATIONS = {
         "Bills": "बिल",
         "Other": "अन्य",
         "Please log in to manage your expenses.": "अपने खर्चों का प्रबंधन करने के लिए कृपया लॉग इन करें।",
-        "Changes saved!": "परिवर्तन सहेजे गए!"
+        "Changes saved!": "परिवर्तन सहेजे गए!",
+        "Comment": "टिप्पणी",
     },
     "Spanish": {
         "🤖 Smart Task Manager Agent": "🤖 Agente Inteligente de Tareas",
@@ -311,7 +312,8 @@ TRANSLATIONS = {
         "Bills": "Facturas",
         "Other": "Otros",
         "Please log in to manage your expenses.": "Por favor, inicia sesión para gestionar tus gastos.",
-        "Changes saved!": "¡Cambios guardados!"
+        "Changes saved!": "¡Cambios guardados!",
+        "Comment": "Comentario",
     },
     "Mandarin Chinese": {
         "🤖 Smart Task Manager Agent": "🤖 智能任务管家",
@@ -468,7 +470,8 @@ TRANSLATIONS = {
         "Bills": "账单",
         "Other": "其他",
         "Please log in to manage your expenses.": "请登录以管理您的费用。",
-        "Changes saved!": "更改已保存！"
+        "Changes saved!": "更改已保存！",
+        "Comment": "评论",
     },
     "Standard Arabic": {
         "🤖 Smart Task Manager Agent": "🤖 مدير المهام الذكي",
@@ -625,7 +628,8 @@ TRANSLATIONS = {
         "Bills": "فواتير",
         "Other": "أخرى",
         "Please log in to manage your expenses.": "يرجى تسجيل الدخول لإدارة نفقاتك.",
-        "Changes saved!": "تم حفظ التغييرات!"
+        "Changes saved!": "تم حفظ التغييرات!",
+        "Comment": "تعليق",
     },
     "French": {
         "🤖 Smart Task Manager Agent": "🤖 Agent Intelligent de Tâches",
@@ -782,7 +786,8 @@ TRANSLATIONS = {
         "Bills": "Factures",
         "Other": "Autre",
         "Please log in to manage your expenses.": "Veuillez vous connecter pour gérer vos dépenses.",
-        "Changes saved!": "Modifications enregistrées !"
+        "Changes saved!": "Modifications enregistrées !",
+        "Comment": "Commentaire",
     },
     "Bengali": {
         "🤖 Smart Task Manager Agent": "🤖 স্মার্ট টাস্ক ম্যানেজার",
@@ -939,7 +944,8 @@ TRANSLATIONS = {
         "Bills": "বিল",
         "Other": "অন্যান্য",
         "Please log in to manage your expenses.": "আপনার খরচ পরিচালনা করতে দয়া করে লগইন করুন।",
-        "Changes saved!": "পরিবর্তন সংরক্ষিত হয়েছে!"
+        "Changes saved!": "পরিবর্তন সংরক্ষিত হয়েছে!",
+        "Comment": "মন্তব্য",
     },
     "Portuguese": {
         "🤖 Smart Task Manager Agent": "🤖 Gerenciador de Tarefas Inteligente",
@@ -1096,7 +1102,8 @@ TRANSLATIONS = {
         "Bills": "Contas",
         "Other": "Outro",
         "Please log in to manage your expenses.": "Por favor, faça login para gerenciar suas despesas.",
-        "Changes saved!": "Alterações salvas!"
+        "Changes saved!": "Alterações salvas!",
+        "Comment": "Comentário",
     },
     "Russian": {
         "🤖 Smart Task Manager Agent": "🤖 Умный Менеджер Задач",
@@ -1253,7 +1260,8 @@ TRANSLATIONS = {
         "Bills": "Счета",
         "Other": "Другое",
         "Please log in to manage your expenses.": "Пожалуйста, войдите, чтобы управлять своими расходами.",
-        "Changes saved!": "Изменения сохранены!"
+        "Changes saved!": "Изменения сохранены!",
+        "Comment": "Комментарий",
     },
     "Urdu": {
         "🤖 Smart Task Manager Agent": "🤖 سمارٹ ٹاسک مینیجر",
@@ -1410,7 +1418,8 @@ TRANSLATIONS = {
         "Bills": "بل",
         "Other": "دیگر",
         "Please log in to manage your expenses.": "اپنے اخراجات کا انتظام کرنے کے لیے براہ کرم لاگ ان کریں۔",
-        "Changes saved!": "تبدیلیاں محفوظ ہو گئیں!"
+        "Changes saved!": "تبدیلیاں محفوظ ہو گئیں!",
+        "Comment": "تبصرہ",
     }
 }
 

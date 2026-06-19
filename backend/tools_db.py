@@ -1,7 +1,7 @@
 from database import get_db
 from datetime import datetime
 
-def add_task(task: str, priority: str, owner: str) -> str:
+def add_task(task: str, priority: str, owner: str, comment: str = "") -> str:
     """Adds a task to the Supabase PostgreSQL database."""
     try:
         db = get_db()
@@ -10,7 +10,8 @@ def add_task(task: str, priority: str, owner: str) -> str:
             "priority": priority,
             "owner": owner,
             "status": "Pending",
-            "date": datetime.now().strftime("%Y-%m-%d")
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "comment": comment
         }
         db.table("tasks").insert(data).execute()
         return f"Success: Task '{task}' added."

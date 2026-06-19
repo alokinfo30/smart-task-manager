@@ -7,6 +7,21 @@ const api = axios.create({
   withCredentials: true,
 });
 
+// Add a request interceptor to attach the Authorization header
+api.interceptors.request.use(
+  (config) => {
+    let token = null;
+    if (typeof window !== 'undefined') {
+      token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    }
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 // Add a response interceptor to handle 401 errors globally
 api.interceptors.response.use(
   (response) => response, // Simply return the response if it's successful

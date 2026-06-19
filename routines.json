@@ -1,1 +1,28 @@
-{}
+{
+    "7985728148": {
+        "settings": [
+            {
+                "id": "aabde813-0f3c-4a48-9873-5e65ce13e68c",
+                "name": "walking",
+                "start": "05:00",
+                "end": "09:00",
+                "days": [
+                    "Monday",
+                    "Tuesday",
+                    "Wednesday",
+                    "Thursday",
+                    "Friday",
+                    "Saturday",
+                    "Sunday"
+                ]
+            }
+        ],
+        "history": {
+            "2026-06-18": {
+                "aabde813-0f3c-4a48-9873-5e65ce13e68c": {
+                    "check_in": "07:23"
+                }
+            }
+        }
+    }
+}

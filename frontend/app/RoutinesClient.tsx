@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import api from '../api';
+import { fetchWithAuth } from './fetchWithAuth';
 
 interface Routine {
   id: string;
@@ -35,11 +35,15 @@ export default function RoutinesClient() {
     talk: false
   });
 
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  const [lang, setLang] = useState('English');
+
   const fetchRoutines = async () => {
     try {
-      const res = await api.get('/api/routines');
-      setRoutines(res.data.settings || []);
-      setHistory(res.data.history || {});
+      const res = await fetchWithAuth(`${API_BASE_URL}/api/routines`);
+      const data = await res.json();
+      setRoutines(data.settings || []);
+      setHistory(data.history || {});
     } catch (err) {
       console.error('Failed to fetch routines', err);
     }
@@ -51,6 +55,9 @@ export default function RoutinesClient() {
       const saved = localStorage.getItem(`dailyGoals_${todayStr}`);
       if (saved) setDailyGoals(JSON.parse(saved));
     }
+
+    const savedLanguage = localStorage.getItem('userLocationLanguage');
+    if (savedLanguage) setLang(savedLanguage);
 
     // Listen for local updates from the AI Agent
     const handleLocalRefresh = () => fetchRoutines();
@@ -70,7 +77,11 @@ export default function RoutinesClient() {
     if (!name.trim() || selectedDays.length === 0) return;
     
     try {
-      await api.post('/api/routines', { name, start, end, days: selectedDays });
+      await fetchWithAuth(`${API_BASE_URL}/api/routines`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, start, end, days: selectedDays })
+      });
       setName('');
       fetchRoutines();
     } catch (err) {
@@ -80,7 +91,7 @@ export default function RoutinesClient() {
 
   const handleDelete = async (id: string) => {
     try {
-      await api.delete(`/api/routines/${id}`);
+      await fetchWithAuth(`${API_BASE_URL}/api/routines/${id}`, { method: 'DELETE' });
       fetchRoutines();
     } catch (err) {
       console.error('Failed to delete routine', err);
@@ -90,7 +101,11 @@ export default function RoutinesClient() {
   const saveRoutineEdit = async () => {
     if (!editRoutineId) return;
     try {
-      await api.put('/api/routines/edit', { routine_id: editRoutineId, ...editRoutineData });
+      await fetchWithAuth(`${API_BASE_URL}/api/routines/edit`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ routine_id: editRoutineId, ...editRoutineData })
+      });
       setEditRoutineId(null);
       fetchRoutines();
     } catch (e) { console.error(e); }
@@ -101,7 +116,11 @@ export default function RoutinesClient() {
     const routine = routines.find(r => r.id === routineId);
     
     try {
-      await api.post('/api/routines/check', { routine_id: routineId, action, time, date: todayStr });
+      await fetchWithAuth(`${API_BASE_URL}/api/routines/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ routine_id: routineId, action, time, date: todayStr })
+      });
       if (routine) {
         speak(`Successfully checked ${action.replace('_', ' ')} for ${routine.name}`);
       }
@@ -120,6 +139,98 @@ export default function RoutinesClient() {
     setDailyGoals(updated);
     if (typeof window !== 'undefined') localStorage.setItem(`dailyGoals_${todayStr}`, JSON.stringify(updated));
   };
+
+  const happinessText = {
+    "English": {
+      title: "🌱 Happiness System",
+      desc: "Remember: the source of your happiness is your lifestyle—talking to good friends, learning something new, eating on time, regular routines, and taking care of yourself. When feeling lonely, ask yourself: 'What do I really need right now? What small action can I take to feel better in 15 minutes?'",
+      morning: "🌅 Morning",
+      m1: "A glass of water",
+      m2: "20 min walk or exercise",
+      m3: "Light breakfast",
+      m4: "10 min day planning",
+      day: "☀️ Day",
+      d1: "Full focus on work",
+      d2: "Water & stretching every 2-3 hours",
+      d3: "Nutritious lunch",
+      evening: "🌇 Evening",
+      e1: "30 min walk or go outside",
+      e2: "Talk to a friend, relative, or colleague for 10-15 mins",
+      e3: "Learn something new for 30-60 mins",
+      night: "🌙 Night",
+      n1: "Light dinner",
+      n2: "To-do list for tomorrow",
+      n3: "Reduce mobile usage before bed",
+      goalTitle: "🎯 A Small 30-Day Goal",
+      goalDesc: "Every night, just ensure this:",
+      g1: "Woke up on time",
+      g2: "Focused on work",
+      g3: "Exercised/Walked",
+      g4: "Ate healthy food",
+      g5: "Talked to someone",
+      footer: "Don't pin your happiness on one person. Build it on five pillars: Health, Work/Career, Family, Friends/Social Connection, and Learning/Growth."
+    },
+    "Hindi": {
+      title: "🌱 खुशी मेंटेन करने का सिस्टम (Happiness System)",
+      desc: "याद रखें: आपकी खुशी का स्रोत आपकी लाइफस्टाइल है—अच्छे दोस्तों से रोज़ बात करना, कुछ नया सीखना, समय पर खाना, नियमित दिनचर्या और अपने ऊपर ध्यान देना। जब अकेलापन महसूस हो, तो खुद से पूछें: 'अभी मुझे वास्तव में क्या चाहिए? ऐसा कौन सा छोटा काम कर सकता हूँ जिससे 15 मिनट बाद बेहतर महसूस करूँ?'",
+      morning: "🌅 सुबह",
+      m1: "एक गिलास पानी",
+      m2: "20 मिनट वॉक या एक्सरसाइज",
+      m3: "हल्का नाश्ता",
+      m4: "10 मिनट दिन की योजना",
+      day: "☀️ दिन में",
+      d1: "काम पर पूरा फोकस",
+      d2: "हर 2-3 घंटे में थोड़ा पानी और स्ट्रेचिंग",
+      d3: "पौष्टिक लंच",
+      evening: "🌇 शाम",
+      e1: "30 मिनट वॉक या बाहर निकलना",
+      e2: "किसी दोस्त, रिश्तेदार या सहकर्मी से 10-15 मिनट बात करना",
+      e3: "30-60 मिनट कुछ नया सीखना",
+      night: "🌙 रात",
+      n1: "हल्का खाना",
+      n2: "अगले दिन की To-do List",
+      n3: "सोने से पहले मोबाइल कम इस्तेमाल करना",
+      goalTitle: "🎯 एक छोटा 30-दिन का लक्ष्य",
+      goalDesc: "रोज़ रात को केवल यह सुनिश्चित करें:",
+      g1: "समय पर उठा",
+      g2: "काम पर फोकस किया",
+      g3: "एक्सरसाइज/वॉक की",
+      g4: "हेल्दी खाना खाया",
+      g5: "किसी से बात की",
+      footer: "अपनी खुशी को किसी एक व्यक्ति पर मत टिकाइए। उसे पाँच स्तंभों पर रखिए: स्वास्थ्य, काम और करियर, परिवार, दोस्त और सामाजिक जुड़ाव, सीखना और व्यक्तिगत विकास।"
+    },
+    "Spanish": {
+      title: "🌱 Sistema de Felicidad",
+      desc: "Recuerda: la fuente de tu felicidad es tu estilo de vida: hablar con buenos amigos, aprender algo nuevo, comer a tiempo, tener rutinas regulares y cuidarte. Cuando te sientas solo, pregúntate: '¿Qué necesito realmente ahora mismo? ¿Qué pequeña acción puedo hacer para sentirme mejor en 15 minutos?'",
+      morning: "🌅 Mañana",
+      m1: "Un vaso de agua",
+      m2: "20 min de caminata o ejercicio",
+      m3: "Desayuno ligero",
+      m4: "10 min planificando el día",
+      day: "☀️ Día",
+      d1: "Enfoque total en el trabajo",
+      d2: "Agua y estiramiento cada 2-3 horas",
+      d3: "Almuerzo nutritivo",
+      evening: "🌇 Tarde",
+      e1: "30 min de caminata o salir al aire libre",
+      e2: "Hablar con un amigo, familiar o colega por 10-15 mins",
+      e3: "Aprender algo nuevo por 30-60 mins",
+      night: "🌙 Noche",
+      n1: "Cena ligera",
+      n2: "Lista de tareas para mañana",
+      n3: "Reducir uso del móvil antes de dormir",
+      goalTitle: "🎯 Pequeña Meta de 30 Días",
+      goalDesc: "Cada noche, solo asegúrate de esto:",
+      g1: "Me desperté a tiempo",
+      g2: "Me enfoqué en el trabajo",
+      g3: "Hice ejercicio/caminé",
+      g4: "Comí saludablemente",
+      g5: "Hablé con alguien",
+      footer: "No bases tu felicidad en una sola persona. Constrúyela sobre cinco pilares: Salud, Trabajo/Carrera, Familia, Amigos/Conexión Social, y Aprendizaje/Crecimiento."
+    }
+  };
+
+  const localized = (happinessText as Record<string, any>)[lang] || happinessText["English"];
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', alignItems: 'start' }}>
@@ -196,59 +307,59 @@ export default function RoutinesClient() {
 
       {/* Motivational / Lifestyle Guide */}
       <div style={{ background: '#ECFDF5', padding: '2rem', borderRadius: '8px', border: '1px solid #A7F3D0', gridColumn: '1 / -1', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-        <h2 style={{ marginTop: 0, color: '#065F46', borderBottom: '2px solid #A7F3D0', paddingBottom: '0.5rem' }}>🌱 खुशी मेंटेन करने का सिस्टम (Happiness System)</h2>
+        <h2 style={{ marginTop: 0, color: '#065F46', borderBottom: '2px solid #A7F3D0', paddingBottom: '0.5rem' }}>{localized.title}</h2>
         
         <p style={{ color: '#064E3B', fontSize: '0.95rem', lineHeight: '1.6', marginBottom: '1.5rem' }}>
-          <strong>याद रखें:</strong> आपकी खुशी का स्रोत आपकी <b>लाइफस्टाइल</b> है—अच्छे दोस्तों से रोज़ बात करना, कुछ नया सीखना, समय पर खाना, नियमित दिनचर्या और अपने ऊपर ध्यान देना। जब अकेलापन महसूस हो, तो खुद से पूछें: <em>"अभी मुझे वास्तव में क्या चाहिए? ऐसा कौन सा छोटा काम कर सकता हूँ जिससे 15 मिनट बाद बेहतर महसूस करूँ?"</em>
+          {localized.desc}
         </p>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2rem' }}>
           <div style={{ flex: 1, minWidth: '250px' }}>
-            <h3 style={{ color: '#047857', marginTop: 0 }}>🌅 सुबह</h3>
+            <h3 style={{ color: '#047857', marginTop: 0 }}>{localized.morning}</h3>
             <ul style={{ color: '#064E3B', fontSize: '0.9rem', lineHeight: '1.6', paddingLeft: '1.2rem' }}>
-              <li>एक गिलास पानी</li>
-              <li>20 मिनट वॉक या एक्सरसाइज</li>
-              <li>हल्का नाश्ता</li>
-              <li>10 मिनट दिन की योजना</li>
+              <li>{localized.m1}</li>
+              <li>{localized.m2}</li>
+              <li>{localized.m3}</li>
+              <li>{localized.m4}</li>
             </ul>
 
-            <h3 style={{ color: '#047857', marginTop: '1.5rem' }}>☀️ दिन में</h3>
+            <h3 style={{ color: '#047857', marginTop: '1.5rem' }}>{localized.day}</h3>
             <ul style={{ color: '#064E3B', fontSize: '0.9rem', lineHeight: '1.6', paddingLeft: '1.2rem' }}>
-              <li>काम पर पूरा फोकस</li>
-              <li>हर 2-3 घंटे में थोड़ा पानी और स्ट्रेचिंग</li>
-              <li>पौष्टिक लंच</li>
+              <li>{localized.d1}</li>
+              <li>{localized.d2}</li>
+              <li>{localized.d3}</li>
             </ul>
           </div>
 
           <div style={{ flex: 1, minWidth: '250px' }}>
-            <h3 style={{ color: '#047857', marginTop: 0 }}>🌇 शाम</h3>
+            <h3 style={{ color: '#047857', marginTop: 0 }}>{localized.evening}</h3>
             <ul style={{ color: '#064E3B', fontSize: '0.9rem', lineHeight: '1.6', paddingLeft: '1.2rem' }}>
-              <li>30 मिनट वॉक या बाहर निकलना</li>
-              <li>किसी दोस्त, रिश्तेदार या सहकर्मी से 10-15 मिनट बात करना</li>
-              <li>30-60 मिनट React/Node.js या नई टेक्नोलॉजी सीखना</li>
+              <li>{localized.e1}</li>
+              <li>{localized.e2}</li>
+              <li>{localized.e3}</li>
             </ul>
 
-            <h3 style={{ color: '#047857', marginTop: '1.5rem' }}>🌙 रात</h3>
+            <h3 style={{ color: '#047857', marginTop: '1.5rem' }}>{localized.night}</h3>
             <ul style={{ color: '#064E3B', fontSize: '0.9rem', lineHeight: '1.6', paddingLeft: '1.2rem' }}>
-              <li>हल्का खाना</li>
-              <li>अगले दिन की To-do List</li>
-              <li>सोने से पहले मोबाइल कम इस्तेमाल करना</li>
+              <li>{localized.n1}</li>
+              <li>{localized.n2}</li>
+              <li>{localized.n3}</li>
             </ul>
           </div>
         </div>
 
         <div style={{ marginTop: '2rem', padding: '1.5rem', background: '#FFFFFF', borderRadius: '8px', borderLeft: '4px solid #10B981' }}>
-          <h3 style={{ color: '#111827', marginTop: 0 }}>🎯 एक छोटा 30-दिन का लक्ष्य</h3>
-          <p style={{ color: '#4B5563', fontSize: '0.9rem', marginBottom: '0.5rem' }}>रोज़ रात को केवल यह सुनिश्चित करें:</p>
+          <h3 style={{ color: '#111827', marginTop: 0 }}>{localized.goalTitle}</h3>
+          <p style={{ color: '#4B5563', fontSize: '0.9rem', marginBottom: '0.5rem' }}>{localized.goalDesc}</p>
           <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', color: '#047857', fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '1rem' }}>
-            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.wakeup ? 0.6 : 1, textDecoration: dailyGoals.wakeup ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.wakeup} onChange={() => toggleGoal('wakeup')} /> समय पर उठा</label>
-            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.focus ? 0.6 : 1, textDecoration: dailyGoals.focus ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.focus} onChange={() => toggleGoal('focus')} /> काम पर फोकस किया</label>
-            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.exercise ? 0.6 : 1, textDecoration: dailyGoals.exercise ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.exercise} onChange={() => toggleGoal('exercise')} /> एक्सरसाइज/वॉक की</label>
-            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.food ? 0.6 : 1, textDecoration: dailyGoals.food ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.food} onChange={() => toggleGoal('food')} /> हेल्दी खाना खाया</label>
-            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.talk ? 0.6 : 1, textDecoration: dailyGoals.talk ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.talk} onChange={() => toggleGoal('talk')} /> किसी से बात की</label>
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.wakeup ? 0.6 : 1, textDecoration: dailyGoals.wakeup ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.wakeup} onChange={() => toggleGoal('wakeup')} /> {localized.g1}</label>
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.focus ? 0.6 : 1, textDecoration: dailyGoals.focus ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.focus} onChange={() => toggleGoal('focus')} /> {localized.g2}</label>
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.exercise ? 0.6 : 1, textDecoration: dailyGoals.exercise ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.exercise} onChange={() => toggleGoal('exercise')} /> {localized.g3}</label>
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.food ? 0.6 : 1, textDecoration: dailyGoals.food ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.food} onChange={() => toggleGoal('food')} /> {localized.g4}</label>
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', opacity: dailyGoals.talk ? 0.6 : 1, textDecoration: dailyGoals.talk ? 'line-through' : 'none' }}><input type="checkbox" checked={dailyGoals.talk} onChange={() => toggleGoal('talk')} /> {localized.g5}</label>
           </div>
           <p style={{ color: '#6B7280', fontSize: '0.85rem', margin: 0, fontStyle: 'italic' }}>
-            अपनी खुशी को किसी एक व्यक्ति पर मत टिकाइए। उसे पाँच स्तंभों पर रखिए: <strong>स्वास्थ्य, काम और करियर, परिवार, दोस्त और सामाजिक जुड़ाव, सीखना और व्यक्तिगत विकास।</strong> अब बदलाव किसी व्यक्ति के लिए नहीं, बल्कि अपनी सेहत, करियर और भविष्य के लिए करना है। यही बदलाव ज्यादा टिकाऊ होता है।
+            {localized.footer}
           </p>
         </div>
       </div>

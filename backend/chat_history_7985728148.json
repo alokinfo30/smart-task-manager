@@ -1,0 +1,122 @@
+{
+  "agent_history": [
+    {
+      "parts": [
+        {
+          "media_resolution": null,
+          "code_execution_result": null,
+          "executable_code": null,
+          "file_data": null,
+          "function_call": null,
+          "function_response": null,
+          "inline_data": null,
+          "text": "Add a high priority task to review the budget",
+          "thought": null,
+          "thought_signature": null,
+          "video_metadata": null,
+          "tool_call": null,
+          "tool_response": null,
+          "part_metadata": null
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "media_resolution": null,
+          "code_execution_result": null,
+          "executable_code": null,
+          "file_data": null,
+          "function_call": {
+            "id": null,
+            "args": {
+              "date": "2026-06-18",
+              "task": "review the budget",
+              "comment": "Reviewing the budget for financial planning.",
+              "priority": "High"
+            },
+            "name": "add_task",
+            "partial_args": null,
+            "will_continue": null
+          },
+          "function_response": null,
+          "inline_data": null,
+          "text": null,
+          "thought": null,
+          "thought_signature": "b'\\n\\xfd\\x02\\x01\\x0c9\\xd6\\xc7\\xe0zK;\\xcb\\xf3\\xab\\x89\\x14\\x82\\xbf\\x1f\")x\\xec\\rQ\\xec\\xbe\\xad\\xe8.\"\\xdc\\xcd\\xded+\\xe5f\\x9e\\x8f\\x19\\xa5\\x9f\\x1bD\\xf1\\xd7\\x8e\\xc4d\\xef9\\xc9^\\xb6 \\xfd2\\xe2\\x1aw\\xbf\\xd7\\xf4\\x019\"\"\\xdcIx\\xb9\\x8e\\x8e\\x06\\xbcu\\x8b\\x05u\\xe9\\x92\\x97\\x94\\xa3NOj\\xbcP\\xf73^D5\\xb9s\\xcd\\xf2l\\x84\\xe0\\xb0\\x9dSo\\xd6O\\xe8\\xf0\\xa3\\r.\\x9c8\\xba\\xaa\\x10\\xba|\\xd1\\x9e\\xad\\xda0{\\x87\\xb7\\xeb-L\\xeb{\\xe3\\xb4\\xbb\\x96\\x13\\xa2\\t\\xbcO\\x08.\\xadF\\xc6\\xc7\\t\\xde\\xdd\\xd7\\xac/\\xfb\\xd2\\xe1.\\n\\x8c\\xb0V\\xdb1F5\\xfa\\x8dp\\xaf\\x9d\\xed\\x8d*:\\xdd\\xda\\xab\\xa4c\\xe6V7P \\xab\\x0b\\x13Sw1q\\xe6Q/Iy\\x8e*w\\xcc\\xe2\"Jl\\xfc\\xd3\\x15;\\xf0\\x19\\xfa\\xf2\\x9e\\x16je4\\x88\\xa8k\\xb9$\\x01\\nZY\\xb2\\xf1\\xb5p^C\\xa9&\\x03\\xa5\\x92\\x13>\\x95\\x90)@\\xa1d\\x1f\\x9a\\xf9\\xdc\\xf1\\xc6h\\xd4\\x9f\\xb7\\xd3a\\xd0\\xebtRAB\\x1da\\x06\\x0e\\xbbx\\xe2Y\\xfdX\\x8c\\xa5\\n\\xc5!@\\xa4\\xb5\\x91bs\\xa5\\xff|\\xee\\xd2\\x1bt=.\\xd4\\xbe\\x03\\x84\\x17\\xa8\\x0cW\\x1355F\\x1d\\xabP9\\xbb\\xf6`\\x9a\\xebU\\xde\\xa1\\x02\\x06\\xed\\xd8\\xe7`\\xf9\\x19:\\xc1\\\\\\xab2\\x88\\xf3\\x80\\xce\\x88\\x9e\\xbe\\xd2\\x81\\xf4C\\xf7j\\x8c\\xec\\xfa\\xbd\\xde<\\xe0\\nZ\\xdd\\xfa\\x91\\x17\\xecaO1\\\\\\xf9\\xf0 [ZC\\x8b9\\xb3(\\xe1\\x0fF\\xe8\\xef\\r-\\xe9z\\x84\\xe7'",
+          "video_metadata": null,
+          "tool_call": null,
+          "tool_response": null,
+          "part_metadata": null
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "media_resolution": null,
+          "code_execution_result": null,
+          "executable_code": null,
+          "file_data": null,
+          "function_call": null,
+          "function_response": {
+            "will_continue": null,
+            "scheduling": null,
+            "parts": null,
+            "id": null,
+            "name": "add_task",
+            "response": {
+              "result": "Success: Task 'review the budget' added successfully."
+            }
+          },
+          "inline_data": null,
+          "text": null,
+          "thought": null,
+          "thought_signature": null,
+          "video_metadata": null,
+          "tool_call": null,
+          "tool_response": null,
+          "part_metadata": null
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "media_resolution": null,
+          "code_execution_result": null,
+          "executable_code": null,
+          "file_data": null,
+          "function_call": null,
+          "function_response": null,
+          "inline_data": null,
+          "text": "Task \"review the budget\" has been added with high priority for today. Let's keep that sprint speed up! Is there anything else I can help you with?",
+          "thought": null,
+          "thought_signature": null,
+          "video_metadata": null,
+          "tool_call": null,
+          "tool_response": null,
+          "part_metadata": null
+        }
+      ],
+      "role": "model"
+    }
+  ],
+  "chat_display": [
+    {
+      "role": "user",
+      "content": "Add a high priority task to review the budget",
+      "timestamp": "2026-06-18T07:06:55.553171",
+      "archived": false
+    },
+    {
+      "role": "assistant",
+      "content": "Task \"review the budget\" has been added with high priority for today. Let's keep that sprint speed up! Is there anything else I can help you with?",
+      "timestamp": "2026-06-18T07:07:00.225859",
+      "archived": false
+    }
+  ]
+}

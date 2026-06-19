@@ -29,7 +29,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Safely register Service Worker on the client to avoid SSR hydration mismatch
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW registration failed:', err));
+        navigator.serviceWorker.register('/sw.js').catch(() => {
+          // Silently catch SW errors when testing across different ports/servers
+        });
       });
     }
 
@@ -58,16 +60,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (username: string, password: string) => {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    
+    // Auto-remove spaces and symbols for real numbers, but allow demo accounts to bypass
+    let finalUsername = username;
+    if (username !== "demo_user" && !username.startsWith("demo_") && !username.startsWith("guest")) {
+      finalUsername = username.replace(/\D/g, '');
+      if (finalUsername.length !== 10) {
+        throw new Error("Mobile number must be exactly 10 digits.");
+      }
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mobile: username, pin: password }),
+      body: JSON.stringify({ mobile: finalUsername, pin: password }),
       credentials: 'include'
     });
     
     if (!response.ok) {
       const err = await response.json();
-      throw new Error(err.detail || 'Login failed');
+      let errMsg = 'Login failed';
+      if (typeof err.detail === 'string') errMsg = err.detail;
+      else if (Array.isArray(err.detail)) errMsg = err.detail[0]?.msg || errMsg;
+      throw new Error(errMsg);
     }
 
     const data = await response.json();

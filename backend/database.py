@@ -36,6 +36,7 @@ class TaskDB(Base):
     completed_at: Mapped[str] = mapped_column(String, nullable=True)
     owner: Mapped[str] = mapped_column(String, index=True)
     shared_with: Mapped[str] = mapped_column(String, default="")
+    comment: Mapped[str] = mapped_column(String, default="", nullable=True)
 
 class ExpenseDB(Base):
     __tablename__ = "expenses"
